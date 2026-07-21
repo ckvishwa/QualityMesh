@@ -243,12 +243,15 @@ Identifiers are stable and referenced by tests and by `PROJECT_STATUS.md`.
   `missingRequiredEvidence` is constrained to `INSUFFICIENT_EVIDENCE`; the `exposedSecrets` and
   `criticalVulnerabilities` threshold rules are constrained to a `BLOCK` outcome.
 
-### FR-2 — Contract loading **(Planned — Task 1.2)**
+### FR-2 — Contract loading **(Implemented)**
 
 - FR-2.1 Load a release contract from a YAML file using a safe, non-executing loader.
 - FR-2.2 Reject YAML constructs that permit object instantiation or arbitrary evaluation.
-- FR-2.3 Bound input size and nesting depth.
-- FR-2.4 Report validation failures with the field path and a diagnostic message.
+- FR-2.3 Bound input size and nesting depth. Also bounded: per-sequence length, per-mapping size and
+  total node count. YAML aliases are refused outright, because alias expansion occurs during
+  construction and cannot be bounded afterwards.
+- FR-2.4 Report validation failures with the field path and a diagnostic message. Diagnostics name
+  the source and the YAML position, and never echo document content.
 - FR-2.5 Provide valid and malformed contract fixtures with test coverage for each rejection rule.
 
 ### FR-3 — Evidence ingestion **(Planned)**
@@ -389,7 +392,7 @@ evidence item, *when* it is validated, *then* validation fails.
 *Given* a contract that sets `artifactMismatch` to `WARN`, or `exposedSecrets.outcome` to `WARN`,
 *when* it is validated, *then* validation fails.
 
-### AS-9 — Contract loads from YAML **(Planned — Task 1.2)**
+### AS-9 — Contract loads from YAML **(Implemented and tested)**
 
 *Given* a release contract on disk, *when* it is loaded, *then* it is parsed with a safe loader and
 validated, and malformed documents are rejected with a field-path diagnostic.
@@ -418,7 +421,7 @@ today.
 
 1. The release contract schema is strict, versioned and fully covered by unit tests. **(Done.)**
 2. Contracts load from YAML through a safe loader, with valid and malformed fixtures covering every
-   rejection rule. *(Outstanding — Task 1.2.)*
+   rejection rule. **(Done.)**
 3. Evidence can be submitted, authenticated by OIDC, and persisted with its pre-normalisation
    digest. *(Outstanding.)*
 4. JUnit and JSON evidence parse through hardened parsers, with parse failure treated as unusable

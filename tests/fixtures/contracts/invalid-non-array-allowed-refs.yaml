@@ -1,0 +1,33 @@
+# allowedRefs must be a YAML sequence, not a bare scalar.
+apiVersion: qualitymesh.dev/v1
+kind: ReleaseContract
+metadata:
+  name: minimal-release
+  version: 1
+trustBoundary:
+  repository: qualitymesh/example
+  defaultBranch: main
+  trustedWorkflows:
+    - id: build-release
+      path: .github/workflows/build-release.yml
+      allowedRefs: refs/heads/main
+      allowedEvents:
+        - push
+requiredEvidence:
+  - id: backend-attestation
+    kind: artifact-attestation
+    subject: artifact
+    producerWorkflow: build-release
+    artifactId: example-api
+policyRules:
+  artifactMismatch: BLOCK
+  untrustedWorkflow: BLOCK
+  invalidAttestation: BLOCK
+  missingRequiredEvidence: INSUFFICIENT_EVIDENCE
+  failedCriticalJourney: BLOCK
+  exposedSecrets:
+    maximum: 0
+    outcome: BLOCK
+  criticalVulnerabilities:
+    maximum: 0
+    outcome: BLOCK

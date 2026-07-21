@@ -41,11 +41,17 @@ qualitymesh/
 ├── docs/                                       # this documentation set
 ├── src/qualitymesh/
 │   ├── __init__.py                             # package docstring only
+│   ├── contracts/
+│   │   ├── __init__.py                         # re-exports the loader API
+│   │   └── loader.py                           # safe YAML loading of a contract
 │   └── schemas/
 │       ├── __init__.py                         # re-exports the public contract models
-│       └── contract.py                         # the entire implementation to date
-└── tests/unit/
-    └── test_contract_schema.py                 # contract validation tests
+│       └── contract.py                         # strict release-contract models
+└── tests/
+    ├── fixtures/contracts/                     # valid and malformed contract documents
+    └── unit/
+        ├── test_contract_schema.py             # schema validation tests
+        └── test_contract_loader.py             # loader boundary tests
 ```
 
 ### Implemented components
@@ -92,6 +98,16 @@ rejection of unknown fields, coerced types, duplicate evidence IDs, dangling wor
 missing artifact binding, omitted required attestation, weakened fail-closed rules and a weakened
 security threshold outcome.
 
+**Safe contract loading** (`src/qualitymesh/contracts/loader.py`). `load_release_contract_bytes` and
+`load_release_contract_file` treat a contract document as untrusted input in fixed order: byte-size
+limit before parsing, refusal of YAML aliases before construction, `yaml.safe_load`, document-shape
+checks (single document, mapping root, string keys), bounded traversal (nesting depth, sequence
+length, mapping size, total nodes), then `ReleaseContract.model_validate`.
+
+`ContractLoadError` covers that pre-schema boundary only; schema failures surface as
+`pydantic.ValidationError`. Diagnostics name the source and the YAML position and never include
+document content. Covered by 52 tests and 35 fixtures under `tests/fixtures/contracts/`.
+
 **Quality tooling, configured.** Ruff (lint rule sets `E`, `F`, `I`, `B`, `UP`, `ASYNC`, `S`, `RUF`;
 line length 100; `S101` permitted in tests) and formatter; Pyright in `strict` mode over `src` and
 `tests`; pytest with `--strict-config --strict-markers` and `asyncio_mode = "strict"`; coverage
@@ -99,7 +115,7 @@ configured with branch coverage and `fail_under = 80`.
 
 ### Explicitly not implemented
 
-There is no YAML loading, no evidence model, no parser, no digest verification, no policy
+There is no evidence model, no evidence parser, no digest verification, no policy
 evaluator, no persistence layer, no object storage, no worker, no HTTP API, no OIDC verification,
 no GitHub integration and no CI workflow. `contract.py` is the whole of the implementation.
 
@@ -367,7 +383,8 @@ required rule is insufficient evidence, never a pass.
 **Input validation.** Strict schema validation with unknown-field rejection at every external
 boundary. **(Implemented for the contract.)**
 
-**Safe parsing.** YAML via a non-constructing safe loader; XML via `defusedxml` with DTD and
+**Safe parsing.** YAML via a non-constructing safe loader, with aliases refused before construction
+**(implemented for the contract)**; XML via `defusedxml` with DTD and
 external-entity processing disabled; JSON with bounded size and nesting depth. No evidence format is
 ever `eval`'d, deserialised into arbitrary objects, or expanded without bounds.
 

@@ -1,0 +1,61 @@
+# Every optional field stated explicitly, with multiple workflows and
+# multiple evidence subjects.
+apiVersion: qualitymesh.dev/v1
+kind: ReleaseContract
+metadata:
+  name: full-release
+  version: 7
+trustBoundary:
+  repository: qualitymesh/example
+  defaultBranch: main
+  oidc:
+    issuer: https://token.actions.githubusercontent.com
+    audience: qualitymesh
+  trustedWorkflows:
+    - id: build-release
+      path: .github/workflows/build-release.yml
+      allowedRefs:
+        - refs/heads/main
+        - refs/pull/*/merge
+      allowedEvents:
+        - push
+        - pull_request
+    - id: smoke-test
+      path: .github/workflows/smoke-test.yml
+      allowedRefs:
+        - refs/heads/main
+      allowedEvents:
+        - deployment_status
+  allowedDigestAlgorithms:
+    - sha256
+  requireArtifactAttestation: true
+requiredEvidence:
+  - id: unit-results
+    kind: junit
+    subject: source-revision
+    producerWorkflow: build-release
+    required: true
+    minimumItems: 2
+  - id: backend-attestation
+    kind: artifact-attestation
+    subject: artifact
+    producerWorkflow: build-release
+    artifactId: example-api
+  - id: post-deploy-journey
+    kind: critical-journey
+    subject: deployed-service
+    producerWorkflow: smoke-test
+    maximumAgeSeconds: 1800
+policyRules:
+  artifactMismatch: BLOCK
+  untrustedWorkflow: BLOCK
+  invalidAttestation: BLOCK
+  missingRequiredEvidence: INSUFFICIENT_EVIDENCE
+  failedCriticalJourney: BLOCK
+  exposedSecrets:
+    maximum: 0
+    outcome: BLOCK
+  criticalVulnerabilities:
+    maximum: 0
+    outcome: BLOCK
+  suspiciousTestCountReductionPercent: 15

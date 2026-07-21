@@ -1,0 +1,3 @@
+# Document root must be a mapping, not a sequence.
+- apiVersion: qualitymesh.dev/v1
+- kind: ReleaseContract

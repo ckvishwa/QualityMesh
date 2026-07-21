@@ -1,0 +1,6 @@
+# Mapping keys must be strings; YAML would otherwise yield an int key.
+apiVersion: qualitymesh.dev/v1
+kind: ReleaseContract
+metadata:
+  name: minimal-release
+  1: 1

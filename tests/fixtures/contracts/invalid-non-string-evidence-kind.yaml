@@ -1,0 +1,38 @@
+# A non-string evidence kind must be rejected, not coerced.
+apiVersion: qualitymesh.dev/v1
+kind: ReleaseContract
+metadata:
+  name: minimal-release
+  version: 1
+trustBoundary:
+  repository: qualitymesh/example
+  defaultBranch: main
+  trustedWorkflows:
+    - id: build-release
+      path: .github/workflows/build-release.yml
+      allowedRefs:
+        - refs/heads/main
+      allowedEvents:
+        - push
+requiredEvidence:
+  - id: backend-attestation
+    kind: artifact-attestation
+    subject: artifact
+    producerWorkflow: build-release
+    artifactId: example-api
+  - id: numeric-kind
+    kind: 123
+    subject: source-revision
+    producerWorkflow: build-release
+policyRules:
+  artifactMismatch: BLOCK
+  untrustedWorkflow: BLOCK
+  invalidAttestation: BLOCK
+  missingRequiredEvidence: INSUFFICIENT_EVIDENCE
+  failedCriticalJourney: BLOCK
+  exposedSecrets:
+    maximum: 0
+    outcome: BLOCK
+  criticalVulnerabilities:
+    maximum: 0
+    outcome: BLOCK

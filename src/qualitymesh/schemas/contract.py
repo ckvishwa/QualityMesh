@@ -39,7 +39,9 @@ def _yaml_array_to_tuple(value: object) -> object:
         return tuple(cast(list[object], value))
     if isinstance(value, tuple):
         return cast(tuple[object, ...], value)
-    raise TypeError("expected an array")
+    # ValueError, not TypeError: Pydantic only converts ValueError and AssertionError into
+    # ValidationError. A TypeError would escape model_validate uncaught.
+    raise ValueError("expected an array")
 
 
 class StrictContractModel(BaseModel):
@@ -92,7 +94,7 @@ def _parse_evidence_kind(value: object) -> EvidenceKind:
     if isinstance(value, EvidenceKind):
         return value
     if not isinstance(value, str):
-        raise TypeError("evidence kind must be a string")
+        raise ValueError("evidence kind must be a string")
     try:
         return EvidenceKind(value)
     except ValueError as exc:
@@ -105,7 +107,7 @@ def _parse_evidence_subject(value: object) -> EvidenceSubject:
     if isinstance(value, EvidenceSubject):
         return value
     if not isinstance(value, str):
-        raise TypeError("evidence subject must be a string")
+        raise ValueError("evidence subject must be a string")
     try:
         return EvidenceSubject(value)
     except ValueError as exc:

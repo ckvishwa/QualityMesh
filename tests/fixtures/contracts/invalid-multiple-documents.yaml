@@ -1,0 +1,6 @@
+# A contract file must hold exactly one document.
+apiVersion: qualitymesh.dev/v1
+kind: ReleaseContract
+---
+apiVersion: qualitymesh.dev/v1
+kind: ReleaseContract

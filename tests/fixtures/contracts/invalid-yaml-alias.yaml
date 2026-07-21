@@ -1,0 +1,8 @@
+# Anchors and aliases are refused: alias expansion happens during construction
+# and multiplies, so it cannot be bounded after parsing.
+apiVersion: qualitymesh.dev/v1
+kind: ReleaseContract
+metadata: &base
+  name: minimal-release
+  version: 1
+trustBoundary: *base

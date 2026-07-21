@@ -1,0 +1,3 @@
+# Arbitrary object construction must never be honoured.
+!!python/object/apply:os.system
+- "unsafe-command"
