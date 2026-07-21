@@ -44,14 +44,21 @@ qualitymesh/
 │   ├── contracts/
 │   │   ├── __init__.py                         # re-exports the loader API
 │   │   └── loader.py                           # safe YAML loading of a contract
+│   ├── parsers/
+│   │   ├── __init__.py                         # re-exports the JUnit parser API
+│   │   └── junit.py                            # hardened JUnit XML parsing
 │   └── schemas/
-│       ├── __init__.py                         # re-exports the public contract models
-│       └── contract.py                         # strict release-contract models
+│       ├── __init__.py                         # re-exports public schema models
+│       ├── contract.py                         # strict release-contract models
+│       └── evidence.py                         # strict evidence-envelope model
 └── tests/
     ├── fixtures/contracts/                     # valid and malformed contract documents
+    ├── fixtures/junit/                         # valid and hostile JUnit XML documents
     └── unit/
         ├── test_contract_schema.py             # schema validation tests
-        └── test_contract_loader.py             # loader boundary tests
+        ├── test_contract_loader.py             # loader boundary tests
+        ├── test_evidence_schema.py             # evidence-envelope tests
+        └── test_junit_parser.py                # JUnit parser boundary tests
 ```
 
 ### Implemented components
@@ -108,6 +115,23 @@ length, mapping size, total nodes), then `ReleaseContract.model_validate`.
 `pydantic.ValidationError`. Diagnostics name the source and the YAML position and never include
 document content. Covered by 52 tests and 35 fixtures under `tests/fixtures/contracts/`.
 
+**Evidence envelope** (`src/qualitymesh/schemas/evidence.py`). `EvidenceEnvelope` wraps raw evidence
+bytes with their declared `EvidenceKind` and `EvidenceSubject`, plus a `digest`/`digest_algorithm`
+computed from the raw bytes as a Pydantic `computed_field` — never accepted as constructor input, so
+a submitted digest cannot be trusted as proof. Does not carry producer/workflow/run/commit claims;
+no field set or format for them is defined anywhere in the repository yet (see FR-3).
+
+**Hardened JUnit parsing** (`src/qualitymesh/parsers/junit.py`). `parse_junit_evidence(envelope, *,
+source_name)` returns `ParsedJUnitEvidence | UnusableJUnitEvidence` — never raises for malformed or
+hostile evidence content, only for a caller precondition violation (wrong envelope kind). Uses
+`defusedxml` with `forbid_dtd`, `forbid_entities` and `forbid_external` all explicitly `True` (the
+library defaults to `forbid_dtd=False`). Bounds byte size (pre-parse), nesting depth, element count
+and testcase count (post-parse — safe because DTD/entity forbidding removes the only amplification
+vector before any tree is built). Suite-declared counts are verified against actual testcases, not
+trusted at face value. Both outcome types link back to the envelope via `raw_digest`. Covered by 40
+tests and 15 fixtures under `tests/fixtures/junit/`, including DTD, external-entity and
+entity-expansion attack fixtures.
+
 **Quality tooling, configured.** Ruff (lint rule sets `E`, `F`, `I`, `B`, `UP`, `ASYNC`, `S`, `RUF`;
 line length 100; `S101` permitted in tests) and formatter; Pyright in `strict` mode over `src` and
 `tests`; pytest with `--strict-config --strict-markers` and `asyncio_mode = "strict"`; coverage
@@ -115,9 +139,10 @@ configured with branch coverage and `fail_under = 80`.
 
 ### Explicitly not implemented
 
-There is no evidence model, no evidence parser, no digest verification, no policy
-evaluator, no persistence layer, no object storage, no worker, no HTTP API, no OIDC verification,
-no GitHub integration and no CI workflow. `contract.py` is the whole of the implementation.
+There is no evidence-to-contract *binding* verification (comparing an evidence digest against the
+artifact under evaluation — FR-5), no parser for any evidence kind other than JUnit, no policy
+evaluator, no persistence layer, no object storage, no worker, no HTTP API, no OIDC verification, no
+GitHub integration and no CI workflow.
 
 ### Declared but unused dependencies
 
@@ -265,7 +290,9 @@ and signatures alone. **(Implemented for the contract.)**
 
 **SHA-256 — content equality and tamper evidence.** Proves that two byte sequences are identical
 and detects modification relative to a recorded reference. It does **not** prove that the bytes are
-safe, well-formed or benign. **(Planned.)**
+safe, well-formed or benign. **(Digest computation implemented** — `EvidenceEnvelope.digest`
+identifies raw evidence bytes. **Comparison against a separately-known-good reference — the actual
+tamper-evidence use, FR-5 — remains planned.)**
 
 **GitHub OIDC — workflow identity.** A verified token asserts which repository, workflow, ref and
 event requested it. It does **not** prove the runner was uncompromised, nor that the evidence
@@ -381,15 +408,17 @@ required rule is insufficient evidence, never a pass.
 **Status: planned unless marked.**
 
 **Input validation.** Strict schema validation with unknown-field rejection at every external
-boundary. **(Implemented for the contract.)**
+boundary. **(Implemented for the contract and the evidence envelope.)**
 
 **Safe parsing.** YAML via a non-constructing safe loader, with aliases refused before construction
-**(implemented for the contract)**; XML via `defusedxml` with DTD and
-external-entity processing disabled; JSON with bounded size and nesting depth. No evidence format is
-ever `eval`'d, deserialised into arbitrary objects, or expanded without bounds.
+**(implemented for the contract)**; XML via `defusedxml` with DTD, entities and external references
+all explicitly forbidden **(implemented for JUnit)**; JSON with bounded size and nesting depth
+**(planned — no evidence kind besides JUnit is parsed yet)**. No evidence format is ever `eval`'d,
+deserialised into arbitrary objects, or expanded without bounds.
 
-**Resource bounds.** Maximum request body size, maximum parse depth, maximum element counts, and
-evaluation timeouts, so that a hostile submission cannot exhaust the worker.
+**Resource bounds.** Maximum request body size, maximum parse depth, maximum element counts
+**(implemented for JUnit evidence)**, and evaluation timeouts, so that a hostile submission cannot
+exhaust the worker.
 
 **Identity verification.** OIDC token signature, issuer, audience, expiry and claims checked against
 the contract trust boundary. Workflow path, ref and event must be explicitly permitted.

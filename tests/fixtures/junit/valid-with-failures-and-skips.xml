@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="qualitymesh.mixed" tests="4" failures="1" errors="1" skipped="1">
+  <testcase name="test_passes" classname="qualitymesh.tests.TestMixed"/>
+  <testcase name="test_fails" classname="qualitymesh.tests.TestMixed">
+    <failure message="assertion failed">AssertionError</failure>
+  </testcase>
+  <testcase name="test_errors" classname="qualitymesh.tests.TestMixed">
+    <error message="unexpected exception">RuntimeError</error>
+  </testcase>
+  <testcase name="test_skipped" classname="qualitymesh.tests.TestMixed">
+    <skipped message="not applicable"/>
+  </testcase>
+</testsuite>

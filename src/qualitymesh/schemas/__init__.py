@@ -9,9 +9,11 @@ from qualitymesh.schemas.contract import (
     RequiredEvidenceItem,
     TrustBoundary,
 )
+from qualitymesh.schemas.evidence import EvidenceEnvelope
 
 __all__ = [
     "Decision",
+    "EvidenceEnvelope",
     "EvidenceKind",
     "EvidenceSubject",
     "PolicyRules",

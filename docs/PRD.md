@@ -264,13 +264,18 @@ Identifiers are stable and referenced by tests and by `PROJECT_STATUS.md`.
 - FR-3.6 Record the repository, workflow, run, commit and artifact subject associated with each
   submission.
 
-### FR-4 — Evidence parsing **(Planned)**
+### FR-4 — Evidence parsing **(Partially implemented — JUnit only)**
 
 - FR-4.1 Parse JUnit XML using a hardened parser that disables external entity and DTD processing.
-- FR-4.2 Parse JSON evidence with bounded size and depth.
+  **(Implemented.)**
+- FR-4.2 Parse JSON evidence with bounded size and depth. **(Planned — no evidence kind other than
+  JUnit has a parser yet.)**
 - FR-4.3 Treat a parse failure as unusable evidence contributing to `INSUFFICIENT_EVIDENCE`, not as
-  a silent success.
-- FR-4.4 Link every normalised record to the raw evidence it was derived from.
+  a silent success. **(Implemented for JUnit** as an explicit `UnusableJUnitEvidence` result;
+  contributing it to an actual `INSUFFICIENT_EVIDENCE` decision is the policy evaluator's job,
+  which does not exist yet.)
+- FR-4.4 Link every normalised record to the raw evidence it was derived from. **(Implemented for
+  JUnit** via `raw_digest` on both `ParsedJUnitEvidence` and `UnusableJUnitEvidence`.)
 
 ### FR-5 — Binding verification **(Planned)**
 
@@ -425,7 +430,7 @@ today.
 3. Evidence can be submitted, authenticated by OIDC, and persisted with its pre-normalisation
    digest. *(Outstanding.)*
 4. JUnit and JSON evidence parse through hardened parsers, with parse failure treated as unusable
-   evidence. *(Outstanding.)*
+   evidence. *(Partially done — JUnit implemented; JSON outstanding.)*
 5. Artifact and source-revision binding is verified against declared digest algorithms.
    *(Outstanding.)*
 6. Completeness evaluation covers required flags, minimum item counts and freshness windows.

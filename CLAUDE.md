@@ -48,18 +48,25 @@ ADR (`docs/adr/README.md`).
 
 ## Current implementation reality
 
-Two modules exist: `schemas/contract.py` (strict models) and `contracts/loader.py` (safe YAML
-loading). There is no evidence model, no parser, no policy evaluator, no database, no API, no
-worker, no CI. `ARCHITECTURE.md` §3 onward describes a planned system that does not exist — do not
-treat it as a map of the codebase.
+Four modules exist: `schemas/contract.py` (strict contract models), `contracts/loader.py` (safe
+YAML loading), `schemas/evidence.py` (strict evidence-envelope model), `parsers/junit.py` (hardened
+JUnit XML parsing). There is no parser for any other evidence kind, no evidence-to-artifact binding
+verification, no policy evaluator, no database, no API, no worker, no CI. `ARCHITECTURE.md` §3
+onward describes a planned system that does not exist — do not treat it as a map of the codebase.
 
-The loader owns the *pre-schema* boundary only — size cap, safe parse, document shape, resource
-bounds — and raises `ContractLoadError`. Schema failures propagate as `pydantic.ValidationError`
-unchanged, so callers catch two types deliberately. Do not re-validate schema rules in the loader.
+The contract loader owns the *pre-schema* boundary only — size cap, safe parse, document shape,
+resource bounds — and raises `ContractLoadError`. Schema failures propagate as
+`pydantic.ValidationError` unchanged, so callers catch two types deliberately. The JUnit parser is
+different by design: `parse_junit_evidence` never raises for malformed evidence content — it returns
+`ParsedJUnitEvidence | UnusableJUnitEvidence`, because many evidence items get evaluated together and
+one bad one must stay visible, not abort the batch. It only raises `JUnitEnvelopeKindError` for a
+caller precondition violation (wrong envelope kind). Do not re-validate schema rules inside either
+boundary module.
 
-`pyproject.toml` declares FastAPI, SQLAlchemy, psycopg, Alembic, boto3, httpx, PyJWT, defusedxml,
-orjson, PyYAML and OpenTelemetry as runtime dependencies. **None are imported.** Only `pydantic` is
-used. Their presence is not permission to start using them outside an accepted task.
+`pyproject.toml` declares FastAPI, SQLAlchemy, psycopg, Alembic, boto3, httpx, PyJWT, orjson,
+PyYAML and OpenTelemetry as runtime dependencies with no importer yet. `defusedxml` and `pydantic`
+are now both used. Declared-but-unused is not permission to start using the rest outside an accepted
+task.
 
 Do not create empty packages or directories for planned components. Structure is a claim about what
 exists.
@@ -119,9 +126,18 @@ callers as an unexpected type. This bit the codebase once already — see Task 1
 before the node cap fired. Any new parser for a hostile format needs its limits applied *before*
 construction, not after.
 
-**Coverage is 98.73% against `fail_under = 80`.** Comfortable, but the number is not the point:
+**Coverage is 99.25% against `fail_under = 80`.** Comfortable, but the number is not the point:
 every rejection rule has a test asserting its *specific* diagnostic. Match messages, not just
 exception types — otherwise a test passes because an unrelated validation error fired first.
+
+**`defusedxml.fromstring` defaults to `forbid_dtd=False`.** Pass `forbid_dtd=True` explicitly, or
+DOCTYPE-based attacks with no `<!ENTITY>` at all sail through untouched — `forbid_entities=True`
+alone (the library default) does not reject a bare DOCTYPE.
+
+**A duplicate resource-bound check can make a real code path silently unreachable.** `junit.py`
+originally checked "zero suites" in two places (an early guard, and the outcome model's own
+invariant); coverage caught that the second check — and the exception branch that would ever reach
+it — were structurally dead. One check per invariant; verify with coverage, not intuition.
 
 **`uv.lock` was regenerated against public PyPI.** It previously pinned an unreachable internal
 mirror. Regenerating inside a different network rewrites all 1191 URLs. Do not regenerate as a side

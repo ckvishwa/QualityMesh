@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="qualitymesh.unit" tests="1" failures="0" errors="0" skipped="0">
+    <testcase name="test_one" classname="qualitymesh.tests.TestOne"/>
+  </testsuite>
+  <testsuite name="qualitymesh.integration" tests="1" failures="0" errors="0" skipped="0">
+    <testcase name="test_two" classname="qualitymesh.tests.TestTwo"/>
+  </testsuite>
+</testsuites>

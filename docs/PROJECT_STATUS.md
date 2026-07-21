@@ -19,7 +19,7 @@ integration work belongs to this phase.
 
 ## Current Task
 
-None in progress. Task 1.2 completed 2026-07-20.
+None in progress. Task 1.3 completed 2026-07-20.
 
 ---
 
@@ -75,6 +75,31 @@ Delivered:
 - Diagnostics naming the source and the PyYAML position, without echoing document content.
 - One defect in Task 1.1 code found and fixed at its boundary — see *Problems encountered*.
 
+### Task 1.3 — Evidence envelope schema and hardened JUnit XML parsing
+
+Implemented in `src/qualitymesh/schemas/evidence.py` and `src/qualitymesh/parsers/junit.py`,
+covered by `test_evidence_schema.py`, `test_junit_parser.py` and 15 fixtures under
+`tests/fixtures/junit/`. Full record:
+[`docs/tasks/TASK-1.3-evidence-envelope-and-junit-parser.md`](tasks/TASK-1.3-evidence-envelope-and-junit-parser.md).
+
+Delivered:
+
+- `EvidenceEnvelope`: kind, subject, raw bytes, plus a `digest`/`digest_algorithm` computed from
+  raw bytes — never accepted as caller input, so a submitted digest cannot be trusted as proof.
+- `parse_junit_evidence(envelope, *, source_name) -> ParsedJUnitEvidence | UnusableJUnitEvidence`.
+  `defusedxml` with DTD, entities and external references all forbidden explicitly (the library
+  defaults to allowing DTDs). Malformed, hostile, oversized or empty evidence is always returned as
+  an explicit unusable result, distinct from success — never raised, never silently dropped, never
+  a successful empty suite.
+- Bounded byte size, nesting depth, element count and testcase count. Bounds run after parsing,
+  which is safe here because DTD/entity forbidding removes the only amplification vector before
+  any tree is built — verified empirically: a constructed billion-laughs-style payload is rejected
+  in 0.1ms.
+- Suite-declared counts (`tests`/`failures`/`errors`/`skipped`) verified against actual testcases,
+  not trusted at face value.
+- Producer/workflow/run/commit claims deliberately excluded — no field set or format for them is
+  defined anywhere in the repository; deferred to the evidence-ingestion task (FR-3).
+
 ### Session 0 — Documentation and project structure
 
 - `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/SYSTEM_RULES.md`, `docs/adr/README.md` and this file
@@ -104,13 +129,13 @@ Nothing. Session 0 is the only active work and it is complete pending review.
 ## Next Task
 
 ```text
-Task 1.3 — Evidence envelope schema and hardened JUnit XML parsing
+Task 1.4 — Evidence-to-contract binding
 ```
 
-Add the strict evidence-envelope model and a `defusedxml`-based JUnit parser with DTD and external
-entity processing disabled, bounded size and depth, and parse failure recorded as unusable evidence
-rather than a silent skip. Pure and offline, so it needs no API, database or worker. Implements
-`PRD.md` FR-4. Not started.
+Verify a `ParsedJUnitEvidence`'s subject and digest against the commit/artifact under evaluation and
+against a `RequiredEvidenceItem`'s declared `producerWorkflow`, implementing `PRD.md` FR-5. Still
+pure and offline — binding verification compares already-available digests and identifiers, not a
+new I/O boundary. Not started.
 
 ---
 
@@ -121,7 +146,7 @@ ADRs before or alongside the next architecture-touching task.
 
 | Decision | Rationale | Where it lives |
 | --- | --- | --- |
-| The release contract is the versioned source of truth for release policy | Deterministic, auditable, replayable decisions require a versioned declarative input | `contract.py` — *(needs ADR-0001)* |
+| The release contract is the versioned source of truth for release policy | Deterministic, auditable, replayable decisions require a versioned declarative input | `contract.py` — [ADR-0001](adr/0001-release-contract-as-source-of-truth.md) |
 | Contract models forbid unknown fields and reject type coercion | The contract is an external trust boundary; silent acceptance of unrecognised or coerced input is how policy drifts | `StrictContractModel` |
 | Validated contract models are immutable | A policy input that can be mutated after validation is not a trustworthy input | `frozen=True` |
 | YAML/JSON arrays are converted to tuples before strict validation | Strict mode would otherwise reject ordinary YAML sequence syntax; freezing preserves immutability | `_yaml_array_to_tuple` |
@@ -132,6 +157,10 @@ ADRs before or alongside the next architecture-touching task.
 | Pyright strict over `src` and `tests` | Tests exercise security-relevant boundaries and are not exempt from type discipline | `pyproject.toml` |
 | PostgreSQL outbox before a message broker | Removes the dual-write window between persisting evidence and publishing work, with no broker to operate | Planned — *(needs ADR-0004)* |
 | Contract loading is two functions, not a loader class | Smallest useful surface; no repository, service layer or injection framework is warranted by one caller | `contracts/loader.py` |
+| Evidence digest is a computed field, never a caller input | A submitter-claimed digest is a claim, not proof; only QualityMesh's own computation from raw bytes counts | `EvidenceEnvelope.digest` |
+| JUnit parse outcome is a returned union, not a raised exception | Unlike single-document contract loading, many evidence items are gathered together; one malformed item must stay visible, not abort a batch or vanish | `ParsedJUnitEvidence \| UnusableJUnitEvidence` |
+| `defusedxml` DTD forbidding is requested explicitly, not relied on as default | The library defaults to `forbid_dtd=False`; the documented security control ("DTD ... disabled") required an explicit `forbid_dtd=True` | `parsers/junit.py` |
+| A zero-test suite parses as success; zero suites does not | The two are different facts — a present suite that ran nothing is real content; an empty document is not. Deciding whether zero-tests is *suspicious* is `suspiciousTestCountReductionPercent`'s job, not the parser's | `parsers/junit.py` — see TASK-1.3 |
 | `ContractLoadError` covers only the pre-schema boundary | Wrapping `ValidationError` would duplicate the field locations Pydantic already produces | `contracts/loader.py` |
 | Resource bounds run after parsing, before validation | PyYAML offers no streaming budget without a custom composer; the byte-size cap is the pre-parse defence | `_enforce_resource_bounds` |
 | YAML aliases are refused outright | Expansion happens during construction, so no post-parse bound can contain it; a contract has no legitimate use for aliases | `_reject_aliases` |
@@ -206,7 +235,9 @@ are not repeated here.
 
 Deliberately not built. See `PRD.md` section 12 and `ARCHITECTURE.md` section 13.
 
-- Evidence models, hardened parsers, digest verification, binding verification.
+- Evidence-to-contract binding verification (FR-5); parsers for evidence kinds other than JUnit
+  (Playwright, SBOM, SCA scan, container scan, artifact attestation, and the rest of
+  `EvidenceKind`).
 - Completeness evaluation and the deterministic policy evaluator.
 - PostgreSQL persistence, Alembic migrations, object storage, the outbox worker.
 - FastAPI ingestion, GitHub OIDC verification, GitHub Checks publication.
@@ -225,86 +256,38 @@ Output below is copied from actual command runs.
 
 | Command | Result |
 | --- | --- |
-| `uv sync --frozen --all-groups` | **Passed.** 105 packages installed. |
-| `uv run pytest` | **Passed.** 61 passed in 0.81s. |
-| `uv run pytest --cov=qualitymesh --cov-report=term-missing` | **Passed.** 61 passed; total coverage 98.73%. |
+| `uv sync --frozen --all-groups` | **Passed.** 104 packages installed. |
+| `uv run pytest` | **Passed.** 100 passed in 1.3s. |
+| `uv run pytest --cov=qualitymesh --cov-report=term-missing` | **Passed.** 100 passed; total coverage 99.25%. |
 | `uv run ruff check .` | **Passed.** `All checks passed!` |
-| `uv run ruff format --check .` | **Passed.** `7 files already formatted` |
+| `uv run ruff format --check .` | **Passed.** `12 files already formatted` |
 | `uv run pyright` | **Passed.** `0 errors, 0 warnings, 0 informations` |
-
-`uv run pytest --cov=qualitymesh --cov-report=term-missing`:
 
 ```text
 Name                                    Stmts   Miss Branch BrPart  Cover   Missing
 -----------------------------------------------------------------------------------
-src\qualitymesh\__init__.py                 0      0      0      0   100%
-src\qualitymesh\contracts\__init__.py       2      0      0      0   100%
 src\qualitymesh\contracts\loader.py        83      0     28      0   100%
-src\qualitymesh\schemas\__init__.py         2      0      0      0   100%
+src\qualitymesh\parsers\junit.py          156      0     42      0   100%
 src\qualitymesh\schemas\contract.py       157      2     44      2    98%   95, 108
+src\qualitymesh\schemas\evidence.py        19      0      0      0   100%
 -----------------------------------------------------------------------------------
-TOTAL                                     244      2     72      2    99%
-Required test coverage of 80.0% reached. Total coverage: 98.73%
-61 passed in 0.90s
+TOTAL                                     422      2    114      2    99%
+Required test coverage of 80.0% reached. Total coverage: 99.25%
 ```
 
-Coverage rose from **80.30% to 98.73%**. `fail_under` remains `80`, unchanged. Every fail-closed
-rejection branch previously listed as a gap is now exercised through a fixture.
+Coverage rose from 98.73% (Task 1.2) to 99.25%. `fail_under` remains `80`, unchanged. The two
+remaining uncovered lines (`contract.py` 95, 108) predate Task 1.2 — see that task's record for why
+they're accept-only paths left deliberately uncovered.
 
-The two remaining uncovered lines are `contract.py` 95 and 108 — the `return value` identity paths
-in `_parse_evidence_kind` and `_parse_evidence_subject`. They are reachable only by constructing a
-model with an `EvidenceKind` or `EvidenceSubject` instance in Python; the YAML boundary always
-yields strings. They are accept paths, not rejection branches, and were left uncovered rather than
-exercised through an artificial route.
+Python 3.12.13 run: identical — `100 passed`, `0 errors, 0 warnings, 0 informations`,
+`All checks passed!`.
 
-Per `SYSTEM_RULES.md` section 7, coverage does not prove correctness. What the number reflects here
-is that each rejection rule has a test asserting its specific diagnostic, not merely that some error
-occurred.
-
-### Python 3.12 verification
-
-Run in an environment outside the repository via `UV_PROJECT_ENVIRONMENT`, so the primary `.venv`
-was untouched.
-
-```text
-Python 3.12.13
-61 passed in 0.86s
-0 errors, 0 warnings, 0 informations     # pyright
-All checks passed!                       # ruff check
-```
-
-### Problems encountered
-
-**Three validators raised `TypeError`, which escaped `model_validate` uncaught.** Pydantic v2
-converts only `ValueError` and `AssertionError` into `ValidationError`. `_yaml_array_to_tuple`,
-`_parse_evidence_kind` and `_parse_evidence_subject` each raised `TypeError`, so a caller writing
-`except ValidationError` would have seen an uncaught `TypeError` for three realistic malformed
-contracts. The rejection still occurred — this was not fail-open — but it surfaced in the wrong type
-at the wrong boundary.
-
-*Resolution:* the three `raise TypeError` statements became `raise ValueError`, fixed at the schema
-boundary rather than caught in the loader, which would have patched the symptom and left every other
-caller exposed. No validation was weakened; the same inputs are still rejected, now with a field
-location. All nine Task 1.1 tests remained green and unmodified.
-
-**Post-parse resource bounds did not contain YAML alias amplification.** Found by the review of the
-finished diff, in this task's own code. `yaml.safe_load` expands aliases during construction, so
-`MAX_TOTAL_NODES` fired only after the cost had been paid: a 375-byte document — far under the
-256 KiB limit — consumed 7.63 seconds and roughly 4.8 million constructed nodes before being
-rejected. One more nesting level is 9× that.
-
-*Resolution:* `_reject_aliases` streams the document through `yaml.parse`, which yields events
-without constructing anything, and refuses any alias before `safe_load` runs. The same payload is
-now rejected in 0.28s. Covered by a fixture and by a constructed amplification payload.
-
-**Remaining known limitation:** `src/` contains exactly one type-checker suppression, a narrow
-`# pyright: ignore[reportUnknownMemberType]` on the `yaml.parse` call. types-pyyaml declares it as
-`(stream: Unknown, ...) -> Unknown`, and the event stream is the only way to inspect a document
-before construction; the result is `cast` so nothing downstream is unknown. Justified under
-`SYSTEM_RULES.md` section 5 and recorded in the task file.
+Per-task problem/resolution detail lives in the task records under `docs/tasks/`, not here — see
+[TASK-1.2](tasks/TASK-1.2-release-contract-yaml-loading.md) and
+[TASK-1.3](tasks/TASK-1.3-evidence-envelope-and-junit-parser.md).
 
 ---
 
 ## Last Updated
 
-**2026-07-20** — Task 1.2, safe release-contract YAML loading.
+**2026-07-20** — Task 1.3, evidence envelope schema and hardened JUnit XML parsing.
