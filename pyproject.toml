@@ -1,0 +1,112 @@
+[project]
+name = "qualitymesh"
+version = "0.1.0"
+description = "Deterministic release-assurance and evidence-evaluation engine."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # API and configuration
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.28.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.0.0",
+
+    # Database
+    "sqlalchemy>=2.0.0",
+    "psycopg[binary]>=3.1.0",
+    "alembic>=1.13.0",
+
+    # Object storage and outbound HTTP
+    "boto3>=1.34.0",
+    "httpx>=0.27.0",
+
+    # OIDC and signature verification
+    "pyjwt[crypto]>=2.9.0",
+
+    # Secure evidence parsing
+    "defusedxml>=0.7.1",
+    "orjson>=3.9.0",
+    "pyyaml>=6.0.1",
+
+    # Observability
+    "opentelemetry-api>=1.23.0",
+    "opentelemetry-sdk>=1.23.0",
+    "opentelemetry-exporter-otlp>=1.23.0",
+    "opentelemetry-instrumentation-fastapi",
+    "opentelemetry-instrumentation-sqlalchemy",
+    "opentelemetry-instrumentation-httpx",
+]
+
+[dependency-groups]
+dev = [
+    # Tests
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "hypothesis>=6.98.0",
+    "testcontainers[minio,postgres]>=4.0.0",
+    "playwright>=1.42.0",
+
+    # HTTP mocking and deterministic tests
+    "respx>=0.21.0",
+    "time-machine>=2.14.0",
+
+    # Quality enforcement
+    "ruff>=0.3.0",
+    "pyright>=1.1.350",
+    "pre-commit>=3.6.0",
+
+    # Type information for third-party libraries
+    "boto3-stubs[s3]",
+    "types-pyyaml",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qualitymesh"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+include = ["src", "tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "B",
+    "UP",
+    "ASYNC",
+    "S",
+    "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = [
+    "-ra",
+    "--strict-config",
+    "--strict-markers",
+]
+asyncio_mode = "strict"
+
+[tool.coverage.run]
+branch = true
+source = ["qualitymesh"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 80
