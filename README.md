@@ -24,12 +24,14 @@ release, and satisfies a declared policy.
 **Phase 1 — Release Contract and Rules.**
 
 Implemented today: the strict, versioned release-contract schema, safe YAML loading of that
-contract, a strict evidence-envelope schema, and a hardened JUnit XML parser
-(`src/qualitymesh/{schemas,contracts,parsers}/`). Everything else — evidence ingestion, evidence
-kinds other than JUnit, evidence-to-artifact binding verification, the policy evaluator,
-persistence, the worker, the API and GitHub integration — is planned and does not exist.
+contract, a strict evidence-envelope schema, a hardened JUnit XML parser, and deterministic
+evidence-to-contract binding verification (`src/qualitymesh/{schemas,contracts,parsers,binding}/`).
+Everything else — evidence ingestion, evidence kinds other than JUnit, the policy evaluator,
+persistence, the worker, the API and GitHub integration — is planned and does not exist. Binding
+verification is a pure comparison function; nothing yet supplies it real data from an actual
+submission, since that requires ingestion (FR-3) to exist first.
 
-The validation suite passes: 100 tests, ruff clean, pyright strict clean, coverage 99.25%, on
+The validation suite passes: 135 tests, ruff clean, pyright strict clean, coverage 99.40%, on
 CPython 3.14 and 3.12. See [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) for the authoritative
 record.
 
@@ -52,6 +54,7 @@ qualitymesh/
 │   └── tasks/
 ├── src/
 │   └── qualitymesh/
+│       ├── binding/          # evidence-to-contract binding verification
 │       ├── contracts/        # safe YAML loading of a release contract
 │       ├── parsers/          # hardened JUnit XML parsing
 │       └── schemas/          # strict release-contract and evidence-envelope models

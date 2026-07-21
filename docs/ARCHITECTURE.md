@@ -41,6 +41,9 @@ qualitymesh/
 ├── docs/                                       # this documentation set
 ├── src/qualitymesh/
 │   ├── __init__.py                             # package docstring only
+│   ├── binding/
+│   │   ├── __init__.py                         # re-exports the binding-verification API
+│   │   └── verifier.py                         # evidence-to-contract binding verification
 │   ├── contracts/
 │   │   ├── __init__.py                         # re-exports the loader API
 │   │   └── loader.py                           # safe YAML loading of a contract
@@ -58,7 +61,9 @@ qualitymesh/
         ├── test_contract_schema.py             # schema validation tests
         ├── test_contract_loader.py             # loader boundary tests
         ├── test_evidence_schema.py             # evidence-envelope tests
-        └── test_junit_parser.py                # JUnit parser boundary tests
+        ├── test_junit_parser.py                # JUnit parser boundary tests
+        ├── test_binding_verifier.py            # binding cross-object comparison tests
+        └── test_binding_claims_and_targets.py  # binding claim/target schema tests
 ```
 
 ### Implemented components
@@ -132,6 +137,19 @@ trusted at face value. Both outcome types link back to the envelope via `raw_dig
 tests and 15 fixtures under `tests/fixtures/junit/`, including DTD, external-entity and
 entity-expansion attack fixtures.
 
+**Evidence-to-contract binding verification** (`src/qualitymesh/binding/verifier.py`).
+`verify_evidence_binding(contract, envelope, binding_claims, evaluation_target)` returns a
+`BindingVerificationResult` with status `BOUND` / `NOT_BOUND` / `INSUFFICIENT_INFORMATION` and a
+single most-foundational reason. Three object families are kept structurally distinct:
+`EvidenceEnvelope` (the payload and its own digest, unchanged from Task 1.3), a binding claim
+(`CommitBindingClaim` / `ArtifactBindingClaim` — untrusted, submitted alongside evidence, rejecting
+the other subject's fields at construction) and an evaluation target
+(`CommitEvaluationTarget` / `ArtifactEvaluationTarget` — canonical, supplied by the evaluation
+caller, never derived from evidence). `EvidenceEnvelope.digest` never participates in a binding
+comparison — it identifies the evidence payload, not an artifact. A matching `producer_workflow`
+claim establishes consistency with the contract only, not that the named workflow produced the
+evidence; OIDC and cryptographic attestation verification remain unimplemented. Covered by 35 tests.
+
 **Quality tooling, configured.** Ruff (lint rule sets `E`, `F`, `I`, `B`, `UP`, `ASYNC`, `S`, `RUF`;
 line length 100; `S101` permitted in tests) and formatter; Pyright in `strict` mode over `src` and
 `tests`; pytest with `--strict-config --strict-markers` and `asyncio_mode = "strict"`; coverage
@@ -139,8 +157,8 @@ configured with branch coverage and `fail_under = 80`.
 
 ### Explicitly not implemented
 
-There is no evidence-to-contract *binding* verification (comparing an evidence digest against the
-artifact under evaluation — FR-5), no parser for any evidence kind other than JUnit, no policy
+There is no evidence *ingestion* (ingestion would supply real binding claims and evaluation targets
+from actual submissions — FR-3), no parser for any evidence kind other than JUnit, no policy
 evaluator, no persistence layer, no object storage, no worker, no HTTP API, no OIDC verification, no
 GitHub integration and no CI workflow.
 
@@ -240,8 +258,12 @@ and before any parsing or normalisation. Everything downstream references that d
 └────────────────────────────────────────────────────────────┘
 ```
 
-Boundary B1 is the only one with an implemented component today: strict schema validation of the
-contract document. The remaining boundaries are planned.
+B1 (strict schema validation of the contract document) and the subject-binding half of B2
+(`verify_evidence_binding`, comparing an untrusted claim against a canonical evaluation target) are
+implemented. B2's OIDC-identity half and B3/B4 remain planned. Task 1.4's binding verification is a
+pure comparison function — nothing yet calls it with claims or targets sourced from a real
+submission, since that requires the ingestion boundary (B1's evidence-side half, FR-3) to exist
+first.
 
 Crossing a boundary is one-way and explicit. Code operating at a higher trust level must never
 re-derive facts from lower-level data without going back through the boundary check.
@@ -291,8 +313,13 @@ and signatures alone. **(Implemented for the contract.)**
 **SHA-256 — content equality and tamper evidence.** Proves that two byte sequences are identical
 and detects modification relative to a recorded reference. It does **not** prove that the bytes are
 safe, well-formed or benign. **(Digest computation implemented** — `EvidenceEnvelope.digest`
-identifies raw evidence bytes. **Comparison against a separately-known-good reference — the actual
-tamper-evidence use, FR-5 — remains planned.)**
+identifies raw evidence bytes, computed by QualityMesh itself, never accepted as input.
+**Comparison implemented** — `verify_evidence_binding` compares a claimed artifact digest against a
+canonical target digest. This comparison is over opaque, caller-supplied strings, not bytes
+QualityMesh has hashed itself; it establishes that two claimed values agree, not that either
+reflects real, hashed content. Verifying a *claim*'s digest against *actual* artifact bytes remains
+planned — that requires the artifact bytes to exist somewhere QualityMesh can read them, which no
+component yet provides.)**
 
 **GitHub OIDC — workflow identity.** A verified token asserts which repository, workflow, ref and
 event requested it. It does **not** prove the runner was uncompromised, nor that the evidence

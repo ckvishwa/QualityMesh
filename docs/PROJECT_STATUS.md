@@ -19,7 +19,7 @@ integration work belongs to this phase.
 
 ## Current Task
 
-None in progress. Task 1.3 completed 2026-07-20.
+None in progress. Task 1.4 completed 2026-07-21.
 
 ---
 
@@ -100,6 +100,32 @@ Delivered:
 - Producer/workflow/run/commit claims deliberately excluded — no field set or format for them is
   defined anywhere in the repository; deferred to the evidence-ingestion task (FR-3).
 
+### Task 1.4 — Evidence-to-contract binding verification
+
+Implemented in `src/qualitymesh/binding/verifier.py`, covered by `test_binding_verifier.py` and
+`test_binding_claims_and_targets.py` (35 tests). Full record:
+[`docs/tasks/TASK-1.4-evidence-to-contract-binding-verification.md`](tasks/TASK-1.4-evidence-to-contract-binding-verification.md).
+
+A real conflict was found and reported before implementation: FR-5 requires comparing evidence
+against "the commit/artifact under evaluation," but nothing on `EvidenceEnvelope` (deliberately, per
+Task 1.3) carries that claim. Resolved by adding a narrow, typed binding-metadata layer — not by
+modifying `EvidenceEnvelope` or inventing a generic identifier field.
+
+Delivered:
+
+- `CommitBindingClaim`/`ArtifactBindingClaim` (untrusted, submitted alongside evidence) and
+  `CommitEvaluationTarget`/`ArtifactEvaluationTarget` (canonical, supplied by the evaluation caller,
+  never derived from evidence) — discriminated pairs, not one generic identifier field, so commit
+  identity, artifact identity and artifact digest can never be confused with one another.
+- `verify_evidence_binding(contract, envelope, binding_claims, evaluation_target) ->
+  BindingVerificationResult`, returning `BOUND` / `NOT_BOUND` / `INSUFFICIENT_INFORMATION` with a
+  single most-foundational reason, deterministically, when multiple problems coexist.
+- `EvidenceEnvelope.digest` (the evidence payload's hash) never participates in any binding
+  comparison — verified by a dedicated test using a payload whose own digest coincidentally equals
+  the target's artifact digest.
+- A matching `producer_workflow` claim proves consistency with the contract, not that the named
+  workflow produced the evidence — OIDC and attestation verification remain unimplemented.
+
 ### Session 0 — Documentation and project structure
 
 - `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/SYSTEM_RULES.md`, `docs/adr/README.md` and this file
@@ -122,20 +148,20 @@ Ruff lint (`E`, `F`, `I`, `B`, `UP`, `ASYNC`, `S`, `RUF`; line length 100) and f
 
 ## In Progress
 
-Nothing. Session 0 is the only active work and it is complete pending review.
+Nothing.
 
 ---
 
 ## Next Task
 
 ```text
-Task 1.4 — Evidence-to-contract binding
+Task 1.5 — Evidence completeness evaluation
 ```
 
-Verify a `ParsedJUnitEvidence`'s subject and digest against the commit/artifact under evaluation and
-against a `RequiredEvidenceItem`'s declared `producerWorkflow`, implementing `PRD.md` FR-5. Still
-pure and offline — binding verification compares already-available digests and identifiers, not a
-new I/O boundary. Not started.
+For each `RequiredEvidenceItem`, determine whether sufficient, fresh, correctly bound evidence
+exists — evaluating `minimumItems` and `maximumAgeSeconds` and consuming
+`BindingVerificationResult` from Task 1.4 — emitting `INSUFFICIENT_EVIDENCE` for any unsatisfied
+required item. Implements `PRD.md` FR-6. Not started.
 
 ---
 
@@ -165,6 +191,10 @@ ADRs before or alongside the next architecture-touching task.
 | Resource bounds run after parsing, before validation | PyYAML offers no streaming budget without a custom composer; the byte-size cap is the pre-parse defence | `_enforce_resource_bounds` |
 | YAML aliases are refused outright | Expansion happens during construction, so no post-parse bound can contain it; a contract has no legitimate use for aliases | `_reject_aliases` |
 | Validators raise `ValueError`, never `TypeError` | Pydantic converts only `ValueError` and `AssertionError` into `ValidationError`; a `TypeError` escapes `model_validate` | `contract.py` — see *Problems encountered* |
+| Binding claims and evaluation targets are separate model families, not one generic identifier field | Commit identity, artifact identity and artifact digest are distinct facts a generic field would conflate | `binding/verifier.py` |
+| Claim/target `digest_algorithm` is a bounded string, not `Literal["sha256"]` | Locking both to `TrustBoundary`'s single current value would make a claim-vs-target algorithm mismatch structurally unreachable | `binding/verifier.py` — see TASK-1.4 |
+| `EvidenceEnvelope.digest` never participates in binding comparisons | It identifies the evidence payload, not the artifact; conflating the two is a real correctness defect, not a style choice | `verify_evidence_binding` |
+| Binding verification returns one most-foundational reason, not an accumulated list | Mirrors `Decision`'s existing most-severe-wins precedence rather than a new accumulation mechanic | `binding/verifier.py` |
 
 ---
 
@@ -235,9 +265,10 @@ are not repeated here.
 
 Deliberately not built. See `PRD.md` section 12 and `ARCHITECTURE.md` section 13.
 
-- Evidence-to-contract binding verification (FR-5); parsers for evidence kinds other than JUnit
-  (Playwright, SBOM, SCA scan, container scan, artifact attestation, and the rest of
-  `EvidenceKind`).
+- Parsers for evidence kinds other than JUnit (Playwright, SBOM, SCA scan, container scan, artifact
+  attestation, and the rest of `EvidenceKind`).
+- A real caller that constructs `BindingClaim`/`EvaluationTarget` values from actual evidence
+  ingestion and release state — Task 1.4 provides the pure comparison only.
 - Completeness evaluation and the deterministic policy evaluator.
 - PostgreSQL persistence, Alembic migrations, object storage, the outbox worker.
 - FastAPI ingestion, GitHub OIDC verification, GitHub Checks publication.
@@ -250,44 +281,29 @@ Deliberately not built. See `PRD.md` section 12 and `ARCHITECTURE.md` section 13
 
 ## Latest Validation Results
 
-**Run date: 2026-07-20. Status: all passing on CPython 3.14.4 and CPython 3.12.13.**
-
-Output below is copied from actual command runs.
+**Run date: 2026-07-21. Status: all passing on CPython 3.14.4 and CPython 3.12.13.**
 
 | Command | Result |
 | --- | --- |
 | `uv sync --frozen --all-groups` | **Passed.** 104 packages installed. |
-| `uv run pytest` | **Passed.** 100 passed in 1.3s. |
-| `uv run pytest --cov=qualitymesh --cov-report=term-missing` | **Passed.** 100 passed; total coverage 99.25%. |
+| `uv run pytest` | **Passed.** 135 passed. |
+| `uv run pytest --cov=qualitymesh --cov-report=term-missing` | **Passed.** 135 passed; total coverage 99.40%. |
 | `uv run ruff check .` | **Passed.** `All checks passed!` |
-| `uv run ruff format --check .` | **Passed.** `12 files already formatted` |
+| `uv run ruff format --check .` | **Passed.** `16 files already formatted` |
 | `uv run pyright` | **Passed.** `0 errors, 0 warnings, 0 informations` |
 
-```text
-Name                                    Stmts   Miss Branch BrPart  Cover   Missing
------------------------------------------------------------------------------------
-src\qualitymesh\contracts\loader.py        83      0     28      0   100%
-src\qualitymesh\parsers\junit.py          156      0     42      0   100%
-src\qualitymesh\schemas\contract.py       157      2     44      2    98%   95, 108
-src\qualitymesh\schemas\evidence.py        19      0      0      0   100%
------------------------------------------------------------------------------------
-TOTAL                                     422      2    114      2    99%
-Required test coverage of 80.0% reached. Total coverage: 99.25%
-```
+`binding/verifier.py`: 100% coverage. `fail_under` remains `80`, unchanged since Task 1.1. The two
+uncovered lines (`contract.py` 95, 108) predate Task 1.2 and remain deliberate accept-only paths.
 
-Coverage rose from 98.73% (Task 1.2) to 99.25%. `fail_under` remains `80`, unchanged. The two
-remaining uncovered lines (`contract.py` 95, 108) predate Task 1.2 — see that task's record for why
-they're accept-only paths left deliberately uncovered.
-
-Python 3.12.13 run: identical — `100 passed`, `0 errors, 0 warnings, 0 informations`,
-`All checks passed!`.
+Python 3.12.13 run: identical results.
 
 Per-task problem/resolution detail lives in the task records under `docs/tasks/`, not here — see
-[TASK-1.2](tasks/TASK-1.2-release-contract-yaml-loading.md) and
-[TASK-1.3](tasks/TASK-1.3-evidence-envelope-and-junit-parser.md).
+[TASK-1.2](tasks/TASK-1.2-release-contract-yaml-loading.md),
+[TASK-1.3](tasks/TASK-1.3-evidence-envelope-and-junit-parser.md), and
+[TASK-1.4](tasks/TASK-1.4-evidence-to-contract-binding-verification.md).
 
 ---
 
 ## Last Updated
 
-**2026-07-20** — Task 1.3, evidence envelope schema and hardened JUnit XML parsing.
+**2026-07-21** — Task 1.4, evidence-to-contract binding verification.

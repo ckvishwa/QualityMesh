@@ -48,11 +48,13 @@ ADR (`docs/adr/README.md`).
 
 ## Current implementation reality
 
-Four modules exist: `schemas/contract.py` (strict contract models), `contracts/loader.py` (safe
+Five modules exist: `schemas/contract.py` (strict contract models), `contracts/loader.py` (safe
 YAML loading), `schemas/evidence.py` (strict evidence-envelope model), `parsers/junit.py` (hardened
-JUnit XML parsing). There is no parser for any other evidence kind, no evidence-to-artifact binding
-verification, no policy evaluator, no database, no API, no worker, no CI. `ARCHITECTURE.md` §3
-onward describes a planned system that does not exist — do not treat it as a map of the codebase.
+JUnit XML parsing), `binding/verifier.py` (evidence-to-contract binding verification). There is no
+parser for any other evidence kind, no evidence *ingestion* (nothing constructs real binding claims
+or evaluation targets from an actual submission yet), no policy evaluator, no database, no API, no
+worker, no CI. `ARCHITECTURE.md` §3 onward describes a planned system that does not exist — do not
+treat it as a map of the codebase.
 
 The contract loader owns the *pre-schema* boundary only — size cap, safe parse, document shape,
 resource bounds — and raises `ContractLoadError`. Schema failures propagate as
@@ -60,8 +62,10 @@ resource bounds — and raises `ContractLoadError`. Schema failures propagate as
 different by design: `parse_junit_evidence` never raises for malformed evidence content — it returns
 `ParsedJUnitEvidence | UnusableJUnitEvidence`, because many evidence items get evaluated together and
 one bad one must stay visible, not abort the batch. It only raises `JUnitEnvelopeKindError` for a
-caller precondition violation (wrong envelope kind). Do not re-validate schema rules inside either
-boundary module.
+caller precondition violation (wrong envelope kind). The binding verifier never raises at all —
+`verify_evidence_binding` always returns a `BindingVerificationResult`
+(`BOUND`/`NOT_BOUND`/`INSUFFICIENT_INFORMATION`), even when a claim or target is entirely absent
+(pass `None`). Do not re-validate schema rules inside any boundary module.
 
 `pyproject.toml` declares FastAPI, SQLAlchemy, psycopg, Alembic, boto3, httpx, PyJWT, orjson,
 PyYAML and OpenTelemetry as runtime dependencies with no importer yet. `defusedxml` and `pydantic`
@@ -95,6 +99,38 @@ Cross-field invariants belong in `model_validator(mode="after")`, not in calling
 cover uniqueness, `producerWorkflow` resolution, the `artifactId`-iff-`subject == artifact` rule, and
 the required-attestation obligation.
 
+## Binding-verification patterns
+
+`binding/verifier.py` compares three deliberately distinct object families — never conflate them:
+
+- `EvidenceEnvelope` (schemas/evidence.py) — the evidence payload and its own digest. Unrelated to
+  artifact identity.
+- A binding claim (`CommitBindingClaim` / `ArtifactBindingClaim`) — untrusted, submitted alongside
+  evidence, describes what the evidence *claims* to concern.
+- An evaluation target (`CommitEvaluationTarget` / `ArtifactEvaluationTarget`) — canonical, supplied
+  by the evaluation caller, never derived from evidence or its claims.
+
+**`EvidenceEnvelope.digest` must never appear in a binding comparison.** It's the hash of the
+evidence payload (e.g. the JUnit report bytes), not an artifact's digest. Comparing them is a real
+correctness defect, not a style nit — there's a dedicated regression test for this
+(`test_evidence_envelope_digest_is_never_used_as_the_artifact_digest`).
+
+**Commit SHA / artifact digest / digest algorithm are unformatted, bounded strings, not `Slug`.**
+No format for any of them exists anywhere in the repo, and `Slug`'s pattern requires a leading
+letter — real hex digests and SHAs routinely start with a digit.
+
+**A matching claim proves consistency, not authenticity.** `producer_workflow` matching
+`RequiredEvidenceItem.producer_workflow` means the submitted identifier agrees with what the
+contract requires — nothing more. It does not prove that workflow produced the evidence. Never word
+a docstring or diagnostic as if it does; OIDC and attestation verification don't exist yet.
+
+**Result carries one reason, not a list.** When multiple things are wrong, `verify_evidence_binding`
+reports the single most-foundational one, in a fixed precedence (unknown requirement → kind/subject
+→ claim/target structural consistency → workflow → algorithm policy → target identity →
+insufficient information). This mirrors `Decision`'s existing most-severe-wins precedence in
+`contract.py`. Don't accumulate a list of simultaneous reasons — that would be a new mechanic the
+rest of the codebase doesn't use.
+
 ## Fail-closed rule
 
 Missing, malformed, contradictory, expired, incomplete or untrusted required evidence must never
@@ -126,9 +162,24 @@ callers as an unexpected type. This bit the codebase once already — see Task 1
 before the node cap fired. Any new parser for a hostile format needs its limits applied *before*
 construction, not after.
 
-**Coverage is 99.25% against `fail_under = 80`.** Comfortable, but the number is not the point:
+**Coverage is 99.40% against `fail_under = 80`.** Comfortable, but the number is not the point:
 every rejection rule has a test asserting its *specific* diagnostic. Match messages, not just
 exception types — otherwise a test passes because an unrelated validation error fired first.
+
+**After a `cast()`, re-check every subsequent reference — a stray use of the pre-cast name is a
+type-safety hole strict mode won't always catch on its own.** `binding/verifier.py` had exactly this
+bug: after `artifact_target = cast(ArtifactEvaluationTarget, evaluation_target)`, one f-string kept
+referencing `evaluation_target.artifact_id` (still union-typed). Pyright caught it as
+`reportUnknownMemberType`/`reportAttributeAccessIssue` — but only because the union's other member
+(`CommitEvaluationTarget`) genuinely lacks that attribute. A cast to a type that happened to share
+the field name would have hidden this silently.
+
+**`pyright: ignore` comments in tests that construct intentionally-invalid objects are usually
+load-bearing, not habit — verify before trusting either way.** Every negative-construction test
+(`ArtifactBindingClaim(...)` missing a required field, etc.) needs one, since pydantic's runtime
+rejection is exactly what strict-mode static checking would also catch. Don't assume they're
+speculative just because there are many of them — stripped all 25 in this task's test files and
+every single one reappeared as a real error.
 
 **`defusedxml.fromstring` defaults to `forbid_dtd=False`.** Pass `forbid_dtd=True` explicitly, or
 DOCTYPE-based attacks with no `<!ENTITY>` at all sail through untouched — `forbid_entities=True`

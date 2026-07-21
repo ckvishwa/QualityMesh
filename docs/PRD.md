@@ -277,12 +277,16 @@ Identifiers are stable and referenced by tests and by `PROJECT_STATUS.md`.
 - FR-4.4 Link every normalised record to the raw evidence it was derived from. **(Implemented for
   JUnit** via `raw_digest` on both `ParsedJUnitEvidence` and `UnusableJUnitEvidence`.)
 
-### FR-5 — Binding verification **(Planned)**
+### FR-5 — Binding verification **(Implemented)**
 
 - FR-5.1 Verify that artifact-subject evidence carries a digest matching the artifact under
-  evaluation.
+  evaluation. **(Implemented** via `ArtifactBindingClaim` vs `ArtifactEvaluationTarget` comparison
+  in `binding/verifier.py`. The claim is untrusted submitted metadata, not derived from evidence
+  content — see FR-3, still planned, for how a real claim would be submitted.)
 - FR-5.2 Verify that source-revision-subject evidence carries the commit under evaluation.
-- FR-5.3 Reject digests using an algorithm not listed in `allowedDigestAlgorithms`.
+  **(Implemented** via `CommitBindingClaim` vs `CommitEvaluationTarget`.)
+- FR-5.3 Reject digests using an algorithm not listed in `allowedDigestAlgorithms`. **(Implemented**
+  — `DIGEST_ALGORITHM_NOT_ALLOWED`, checked against `trust_boundary.allowed_digest_algorithms`.)
 
 ### FR-6 — Completeness evaluation **(Planned)**
 
@@ -432,7 +436,8 @@ today.
 4. JUnit and JSON evidence parse through hardened parsers, with parse failure treated as unusable
    evidence. *(Partially done — JUnit implemented; JSON outstanding.)*
 5. Artifact and source-revision binding is verified against declared digest algorithms.
-   *(Outstanding.)*
+   **(Done** — the pure comparison exists; a real caller wiring it to actual ingestion and
+   evaluation-target data does not yet, since ingestion itself is FR-3, still outstanding.)
 6. Completeness evaluation covers required flags, minimum item counts and freshness windows.
    *(Outstanding.)*
 7. The policy evaluator is deterministic and implements the precedence in section 7.
