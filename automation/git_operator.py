@@ -119,6 +119,32 @@ def has_unresolved_merge_state(repo_path: Path) -> bool:
     return (repo_path / git_path).exists()
 
 
+def count_diff_line_changes(repo_path: Path, paths: Sequence[str]) -> int:
+    """Total added-plus-removed lines across `paths` in the current, unstaged
+    working-tree diff (read-only; never requires staging first).
+
+    Added for QM-AUTO-013: `automation.evidence_recorder
+    .verify_commit_preconditions` takes `diff_line_count` as a caller-supplied
+    fact, and nothing else in this package computes one. A binary file (which
+    `git diff --numstat` reports as `-\t-\t<path>` rather than numeric counts)
+    contributes 0.
+    """
+    if not paths:
+        return 0
+    output = _run_git(["diff", "--numstat", "--", *paths], cwd=repo_path)
+    total = 0
+    for line in output.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        added, removed = parts[0], parts[1]
+        if added.isdigit():
+            total += int(added)
+        if removed.isdigit():
+            total += int(removed)
+    return total
+
+
 def staged_paths(repo_path: Path) -> tuple[str, ...]:
     """The paths currently staged for commit (read-only)."""
     output = _run_git(["diff", "--cached", "--name-only"], cwd=repo_path)
