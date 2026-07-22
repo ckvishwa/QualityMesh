@@ -288,12 +288,18 @@ Identifiers are stable and referenced by tests and by `PROJECT_STATUS.md`.
 - FR-5.3 Reject digests using an algorithm not listed in `allowedDigestAlgorithms`. **(Implemented**
   — `DIGEST_ALGORITHM_NOT_ALLOWED`, checked against `trust_boundary.allowed_digest_algorithms`.)
 
-### FR-6 — Completeness evaluation **(Planned)**
+### FR-6 — Completeness evaluation **(Implemented)**
 
 - FR-6.1 For each required evidence item, determine whether sufficient, fresh, correctly bound
-  evidence exists.
-- FR-6.2 Evaluate `minimumItems` and `maximumAgeSeconds`.
-- FR-6.3 Emit `INSUFFICIENT_EVIDENCE` for any unsatisfied required item.
+  evidence exists. **(Implemented** via `evaluate_completeness` in `completeness/evaluator.py`,
+  consuming `BindingVerificationResult` from FR-5 rather than re-deriving binding.)
+- FR-6.2 Evaluate `minimumItems` and `maximumAgeSeconds`. **(Implemented.** Freshness required a new
+  minimal carrier, `EvidenceCandidate.observed_at` — no component recorded an evidence timestamp
+  before this; see `PROJECT_STATUS.md`'s Task 1.5 entry.)
+- FR-6.3 Emit `INSUFFICIENT_EVIDENCE` for any unsatisfied required item. **(Implemented** as
+  `CompletenessOutcome.INSUFFICIENT_EVIDENCE` — a task-specific enum, not `Decision`, since
+  completeness alone is necessary but not sufficient for `Decision.PASS`; the future policy
+  evaluator (FR-7) is what maps this into an actual `Decision`.)
 
 ### FR-7 — Policy evaluation **(Planned)**
 
@@ -439,7 +445,8 @@ today.
    **(Done** — the pure comparison exists; a real caller wiring it to actual ingestion and
    evaluation-target data does not yet, since ingestion itself is FR-3, still outstanding.)
 6. Completeness evaluation covers required flags, minimum item counts and freshness windows.
-   *(Outstanding.)*
+   **(Done** — the pure evaluation exists; a real caller supplying it with actual evidence and
+   timestamps does not yet, since that depends on FR-3 ingestion, still outstanding.)
 7. The policy evaluator is deterministic and implements the precedence in section 7.
    *(Outstanding.)*
 8. Threat scenarios A, B and C have end-to-end tests asserting the expected decision.

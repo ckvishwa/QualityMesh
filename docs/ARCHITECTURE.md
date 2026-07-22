@@ -44,6 +44,9 @@ qualitymesh/
 │   ├── binding/
 │   │   ├── __init__.py                         # re-exports the binding-verification API
 │   │   └── verifier.py                         # evidence-to-contract binding verification
+│   ├── completeness/
+│   │   ├── __init__.py                         # re-exports the completeness-evaluation API
+│   │   └── evaluator.py                        # evidence completeness evaluation
 │   ├── contracts/
 │   │   ├── __init__.py                         # re-exports the loader API
 │   │   └── loader.py                           # safe YAML loading of a contract
@@ -63,7 +66,8 @@ qualitymesh/
         ├── test_evidence_schema.py             # evidence-envelope tests
         ├── test_junit_parser.py                # JUnit parser boundary tests
         ├── test_binding_verifier.py            # binding cross-object comparison tests
-        └── test_binding_claims_and_targets.py  # binding claim/target schema tests
+        ├── test_binding_claims_and_targets.py  # binding claim/target schema tests
+        └── test_completeness_evaluator.py      # completeness evaluation tests
 ```
 
 ### Implemented components
@@ -150,6 +154,18 @@ comparison — it identifies the evidence payload, not an artifact. A matching `
 claim establishes consistency with the contract only, not that the named workflow produced the
 evidence; OIDC and cryptographic attestation verification remain unimplemented. Covered by 35 tests.
 
+**Evidence completeness evaluation** (`src/qualitymesh/completeness/evaluator.py`).
+`evaluate_completeness(contract, candidates, as_of)` returns a `CompletenessResult` — one
+`RequirementCompletenessResult` per `RequiredEvidenceItem`, satisfied or not, plus any candidates
+whose `requirement_id` matched nothing. `EvidenceCandidate` bundles an `EvidenceEnvelope`, a
+`BindingVerificationResult` (Task 1.4's output, consumed — never re-derived) and an explicit,
+required, timezone-aware `observed_at`; no component computes this automatically, and no clock is
+read anywhere in the evaluator. A candidate counts only if its binding is `BOUND`, its kind and
+subject match the requirement, it is not future-dated, it is within `maximumAgeSeconds` when one is
+declared (inclusive boundary), and it is not a duplicate (by payload digest) of one already counted.
+`CompletenessOutcome.SATISFIED` is deliberately not `Decision.PASS` — completeness is necessary but
+not sufficient for a release to pass the future policy evaluator (FR-7). Covered by 32 tests.
+
 **Quality tooling, configured.** Ruff (lint rule sets `E`, `F`, `I`, `B`, `UP`, `ASYNC`, `S`, `RUF`;
 line length 100; `S101` permitted in tests) and formatter; Pyright in `strict` mode over `src` and
 `tests`; pytest with `--strict-config --strict-markers` and `asyncio_mode = "strict"`; coverage
@@ -157,10 +173,10 @@ configured with branch coverage and `fail_under = 80`.
 
 ### Explicitly not implemented
 
-There is no evidence *ingestion* (ingestion would supply real binding claims and evaluation targets
-from actual submissions — FR-3), no parser for any evidence kind other than JUnit, no policy
-evaluator, no persistence layer, no object storage, no worker, no HTTP API, no OIDC verification, no
-GitHub integration and no CI workflow.
+There is no evidence *ingestion* (ingestion would supply real binding claims, evaluation targets and
+evidence-candidate timestamps from actual submissions — FR-3), no parser for any evidence kind other
+than JUnit, no policy evaluator, no persistence layer, no object storage, no worker, no HTTP API, no
+OIDC verification, no GitHub integration and no CI workflow.
 
 ### Declared but unused dependencies
 
@@ -390,13 +406,19 @@ window. A broker can be introduced later behind the same interface. See planned 
 
 ## 9. Release Evaluation Lifecycle
 
-**Status: planned.**
+**Status: steps 4 and the subject-binding half of step 3 implemented as pure functions; the
+end-to-end lifecycle — including the I/O that would gather real evidence and construct real
+`EvaluationTarget`/`EvidenceCandidate` values — remains planned.**
 
 1. **Resolve contract.** Load the contract version applicable to the release under evaluation.
 2. **Resolve subject.** Identify the commit and artifact digest proposed for release.
 3. **Gather evidence.** Collect verified evidence bound to that commit and artifact digest.
+   **(`verify_evidence_binding` implemented — Task 1.4; gathering real evidence to feed it is
+   ingestion, FR-3, still planned.)**
 4. **Evaluate completeness.** For each required evidence item, check presence, `minimumItems`,
    `maximumAgeSeconds` and subject binding. Any shortfall yields `INSUFFICIENT_EVIDENCE`.
+   **(Implemented** — `evaluate_completeness`, Task 1.5, produces `CompletenessOutcome.INSUFFICIENT_EVIDENCE`
+   under exactly this condition.)
 5. **Evaluate rules.** Apply policy rules to normalised evidence, producing a per-rule outcome.
 6. **Apply precedence.** `BLOCK > INSUFFICIENT_EVIDENCE > WARN > PASS`. The most severe outcome
    wins.

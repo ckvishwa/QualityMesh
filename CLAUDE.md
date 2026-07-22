@@ -48,11 +48,12 @@ ADR (`docs/adr/README.md`).
 
 ## Current implementation reality
 
-Five modules exist: `schemas/contract.py` (strict contract models), `contracts/loader.py` (safe
-YAML loading), `schemas/evidence.py` (strict evidence-envelope model), `parsers/junit.py` (hardened
-JUnit XML parsing), `binding/verifier.py` (evidence-to-contract binding verification). There is no
-parser for any other evidence kind, no evidence *ingestion* (nothing constructs real binding claims
-or evaluation targets from an actual submission yet), no policy evaluator, no database, no API, no
+Six modules exist: `schemas/contract.py` (strict contract models), `contracts/loader.py` (safe YAML
+loading), `schemas/evidence.py` (strict evidence-envelope model), `parsers/junit.py` (hardened
+JUnit XML parsing), `binding/verifier.py` (evidence-to-contract binding verification),
+`completeness/evaluator.py` (evidence completeness evaluation). There is no parser for any other
+evidence kind, no evidence *ingestion* (nothing constructs real binding claims, evaluation targets
+or evidence candidates from an actual submission yet), no policy evaluator, no database, no API, no
 worker, no CI. `ARCHITECTURE.md` §3 onward describes a planned system that does not exist — do not
 treat it as a map of the codebase.
 
@@ -65,7 +66,10 @@ one bad one must stay visible, not abort the batch. It only raises `JUnitEnvelop
 caller precondition violation (wrong envelope kind). The binding verifier never raises at all —
 `verify_evidence_binding` always returns a `BindingVerificationResult`
 (`BOUND`/`NOT_BOUND`/`INSUFFICIENT_INFORMATION`), even when a claim or target is entirely absent
-(pass `None`). Do not re-validate schema rules inside any boundary module.
+(pass `None`). The completeness evaluator raises only for a genuinely invalid call — a naive `as_of`
+— never for an unsatisfied requirement, which is a normal result
+(`CompletenessOutcome.INSUFFICIENT_EVIDENCE`), not an error. Do not re-validate schema rules inside
+any boundary module.
 
 `pyproject.toml` declares FastAPI, SQLAlchemy, psycopg, Alembic, boto3, httpx, PyJWT, orjson,
 PyYAML and OpenTelemetry as runtime dependencies with no importer yet. `defusedxml` and `pydantic`
@@ -131,6 +135,37 @@ insufficient information). This mirrors `Decision`'s existing most-severe-wins p
 `contract.py`. Don't accumulate a list of simultaneous reasons — that would be a new mechanic the
 rest of the codebase doesn't use.
 
+## Completeness-evaluation patterns
+
+`completeness/evaluator.py` consumes `BindingVerificationResult` — it never re-derives binding.
+Only `.status` is read (`BindingStatus.BOUND` / `NOT_BOUND` / `INSUFFICIENT_INFORMATION`); the
+module doesn't import `BindingReason` at all. If you find yourself writing a digest/commit
+comparison inside this module, stop — that's Task 1.4's job, not this one's.
+
+**`EvidenceCandidate.observed_at` is required, timezone-aware-only, and never computed by this
+codebase.** No component calls `datetime.now()`/`utcnow()`/`time.time()` anywhere — verified by
+grep, not assumption. A naive timestamp is a schema-level `ValidationError`, not a silently-assumed
+UTC value. `evaluate_completeness`'s own `as_of` parameter gets the identical treatment.
+
+**Freshness boundary is inclusive** (`age <= maximumAgeSeconds` qualifies), matching the existing
+`> limit` rejection pattern in `contracts/loader.py` and `parsers/junit.py` (both accept
+exactly-at-limit). Don't silently pick the opposite convention in a new size/age/count check without
+checking this precedent first.
+
+**A future-dated timestamp is rejected unconditionally** — checked before, and independent of,
+whether `maximumAgeSeconds` is even set. An impossible timestamp is invalid on its own; it doesn't
+need a configured limit to be wrong.
+
+**Duplicate evidence (same `envelope.digest`) counts once per requirement, not globally.** Grounded
+in `SYSTEM_RULES.md`'s existing reprocessing-idempotency rule, not invented. The same raw bytes can
+legitimately satisfy two different requirements — dedup only within one requirement's own candidate
+list.
+
+**`CompletenessOutcome` is its own enum, not `Decision`.** `SATISFIED` is not `Decision.PASS`.
+Resist the urge to "simplify" by reusing `Decision` here — completeness is necessary but not
+sufficient for a release to pass; conflating the two would misrepresent what this module actually
+proves.
+
 ## Fail-closed rule
 
 Missing, malformed, contradictory, expired, incomplete or untrusted required evidence must never
@@ -162,7 +197,7 @@ callers as an unexpected type. This bit the codebase once already — see Task 1
 before the node cap fired. Any new parser for a hostile format needs its limits applied *before*
 construction, not after.
 
-**Coverage is 99.40% against `fail_under = 80`.** Comfortable, but the number is not the point:
+**Coverage is 99.49% against `fail_under = 80`.** Comfortable, but the number is not the point:
 every rejection rule has a test asserting its *specific* diagnostic. Match messages, not just
 exception types — otherwise a test passes because an unrelated validation error fired first.
 
@@ -174,12 +209,22 @@ referencing `evaluation_target.artifact_id` (still union-typed). Pyright caught 
 (`CommitEvaluationTarget`) genuinely lacks that attribute. A cast to a type that happened to share
 the field name would have hidden this silently.
 
-**`pyright: ignore` comments in tests that construct intentionally-invalid objects are usually
-load-bearing, not habit — verify before trusting either way.** Every negative-construction test
-(`ArtifactBindingClaim(...)` missing a required field, etc.) needs one, since pydantic's runtime
-rejection is exactly what strict-mode static checking would also catch. Don't assume they're
-speculative just because there are many of them — stripped all 25 in this task's test files and
-every single one reappeared as a real error.
+**`pyright: ignore` comments genuinely vary by exactly what they're suppressing — verify every one,
+don't pattern-match from a prior task.** Wrong/missing constructor arguments (`reportCallIssue`,
+`reportArgumentType`) on intentional negative-construction tests are consistently load-bearing —
+pydantic's runtime rejection is exactly what strict mode also catches statically. Simple attribute
+*reassignment* on a frozen model (`result.status = ...`, `# pyright: ignore[reportAttributeAccessIssue]`)
+is a different case: pyright does not statically know a pydantic model is frozen from
+`model_config`, so it doesn't flag the assignment at all — the ignore does nothing and should be
+removed. Confirmed by stripping-and-rechecking twice (a single check can be a stale/flaky pyright
+run — see below) in both Task 1.4's committed files (25/25 needed) and this task's own file (2/4
+needed, the other 2 removed).
+
+**A single pyright run after a file edit can be stale — rerun before concluding anything from a
+result you didn't expect.** Got `0 errors` immediately after stripping ignores from already-verified
+Task 1.4 files (which should have shown 25), directly contradicting that task's own record.
+Rerunning the identical check immediately after produced `25` twice in a row. Don't write down or
+act on a single suspicious pyright result — rerun it.
 
 **`defusedxml.fromstring` defaults to `forbid_dtd=False`.** Pass `forbid_dtd=True` explicitly, or
 DOCTYPE-based attacks with no `<!ENTITY>` at all sail through untouched — `forbid_entities=True`

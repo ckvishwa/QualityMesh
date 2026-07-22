@@ -19,7 +19,7 @@ integration work belongs to this phase.
 
 ## Current Task
 
-None in progress. Task 1.4 completed 2026-07-21.
+None in progress. Task 1.5 completed 2026-07-21.
 
 ---
 
@@ -126,6 +126,33 @@ Delivered:
 - A matching `producer_workflow` claim proves consistency with the contract, not that the named
   workflow produced the evidence — OIDC and attestation verification remain unimplemented.
 
+### Task 1.5 — Evidence completeness evaluation
+
+Implemented in `src/qualitymesh/completeness/evaluator.py`, covered by
+`test_completeness_evaluator.py` (32 tests). Full record:
+[`docs/tasks/TASK-1.5-evidence-completeness-evaluation.md`](tasks/TASK-1.5-evidence-completeness-evaluation.md).
+
+No component in the repository recorded when evidence was produced or observed — a real gap for
+FR-6.2's `maximumAgeSeconds`, verified by grep before writing any code. Resolved by adding
+`EvidenceCandidate`, the minimal typed carrier `ARCHITECTURE.md` §9 already anticipated ("the
+evaluation core is a pure function of `(contract, evidence set, artifact digest, evaluation
+timestamp)`") — not a new decision, its concrete realization.
+
+Delivered:
+
+- `EvidenceCandidate`: envelope + requirement reference + `BindingVerificationResult` +
+  explicit, required, timezone-aware `observed_at`. No clock is read anywhere in this module.
+- `evaluate_completeness(contract, candidates, as_of) -> CompletenessResult`, pure and
+  deterministic. Every `RequiredEvidenceItem` gets exactly one result, satisfied or not; contract
+  and candidate order preserved throughout.
+- A candidate qualifies only if its binding is `BOUND` *and* kind/subject match the requirement
+  *and* it isn't future-dated *and* it's within `maximumAgeSeconds` (inclusive boundary, when set)
+  *and* it isn't a duplicate (same `envelope.digest`) of one already counted.
+- `CompletenessOutcome.SATISFIED` is deliberately not `Decision.PASS` — complete evidence is
+  necessary but not sufficient for a release to pass FR-7's policy evaluation.
+- Duplicate evidence (identical payload digest) counts once per requirement, per
+  `SYSTEM_RULES.md`'s existing reprocessing-idempotency rule — not an invented decision.
+
 ### Session 0 — Documentation and project structure
 
 - `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/SYSTEM_RULES.md`, `docs/adr/README.md` and this file
@@ -155,13 +182,13 @@ Nothing.
 ## Next Task
 
 ```text
-Task 1.5 — Evidence completeness evaluation
+Task 1.6 — Deterministic policy evaluation
 ```
 
-For each `RequiredEvidenceItem`, determine whether sufficient, fresh, correctly bound evidence
-exists — evaluating `minimumItems` and `maximumAgeSeconds` and consuming
-`BindingVerificationResult` from Task 1.4 — emitting `INSUFFICIENT_EVIDENCE` for any unsatisfied
-required item. Implements `PRD.md` FR-6. Not started.
+Combine `CompletenessResult` (Task 1.5) with the contract's other policy rules (artifact mismatch,
+exposed secrets, critical vulnerabilities, failed critical journey) under `Decision`'s existing
+precedence (`BLOCK > INSUFFICIENT_EVIDENCE > WARN > PASS`) to produce the first real release
+`Decision`. Implements `PRD.md` FR-7. Not started.
 
 ---
 
@@ -195,6 +222,10 @@ ADRs before or alongside the next architecture-touching task.
 | Claim/target `digest_algorithm` is a bounded string, not `Literal["sha256"]` | Locking both to `TrustBoundary`'s single current value would make a claim-vs-target algorithm mismatch structurally unreachable | `binding/verifier.py` — see TASK-1.4 |
 | `EvidenceEnvelope.digest` never participates in binding comparisons | It identifies the evidence payload, not the artifact; conflating the two is a real correctness defect, not a style choice | `verify_evidence_binding` |
 | Binding verification returns one most-foundational reason, not an accumulated list | Mirrors `Decision`'s existing most-severe-wins precedence rather than a new accumulation mechanic | `binding/verifier.py` |
+| `CompletenessOutcome` is a new enum, not a reuse of `Decision` | `SATISFIED` is not `Decision.PASS` — complete evidence is necessary but not sufficient for a release to pass FR-7's policy evaluation | `completeness/evaluator.py` |
+| Duplicate evidence (same payload digest) counts once per requirement | `SYSTEM_RULES.md`'s existing reprocessing-idempotency rule already answers this; not an invented decision | `evaluate_completeness` — see TASK-1.5 |
+| Freshness boundary is inclusive (`age <= maximumAgeSeconds` qualifies) | Matches this repo's own existing precedent — `contracts/loader.py` and `parsers/junit.py` both reject strictly `>` their size limits | `evaluate_completeness` |
+| A future-dated timestamp is rejected unconditionally, independent of `maximumAgeSeconds` | An impossible timestamp is invalid on its face, not merely "not yet stale" | `evaluate_completeness` |
 
 ---
 
@@ -267,9 +298,10 @@ Deliberately not built. See `PRD.md` section 12 and `ARCHITECTURE.md` section 13
 
 - Parsers for evidence kinds other than JUnit (Playwright, SBOM, SCA scan, container scan, artifact
   attestation, and the rest of `EvidenceKind`).
-- A real caller that constructs `BindingClaim`/`EvaluationTarget` values from actual evidence
-  ingestion and release state — Task 1.4 provides the pure comparison only.
-- Completeness evaluation and the deterministic policy evaluator.
+- A real caller that constructs `BindingClaim`/`EvaluationTarget`/`EvidenceCandidate` values from
+  actual evidence ingestion and release state — Tasks 1.4 and 1.5 provide pure functions only.
+- The deterministic policy evaluator (FR-7) — Task 1.5 provides completeness only, not a release
+  decision.
 - PostgreSQL persistence, Alembic migrations, object storage, the outbox worker.
 - FastAPI ingestion, GitHub OIDC verification, GitHub Checks publication.
 - End-to-end tests for Threats A, B and C.
@@ -286,24 +318,26 @@ Deliberately not built. See `PRD.md` section 12 and `ARCHITECTURE.md` section 13
 | Command | Result |
 | --- | --- |
 | `uv sync --frozen --all-groups` | **Passed.** 104 packages installed. |
-| `uv run pytest` | **Passed.** 135 passed. |
-| `uv run pytest --cov=qualitymesh --cov-report=term-missing` | **Passed.** 135 passed; total coverage 99.40%. |
+| `uv run pytest` | **Passed.** 167 passed. |
+| `uv run pytest --cov=qualitymesh --cov-report=term-missing` | **Passed.** 167 passed; total coverage 99.49%. |
 | `uv run ruff check .` | **Passed.** `All checks passed!` |
-| `uv run ruff format --check .` | **Passed.** `16 files already formatted` |
+| `uv run ruff format --check .` | **Passed.** `19 files already formatted` |
 | `uv run pyright` | **Passed.** `0 errors, 0 warnings, 0 informations` |
 
-`binding/verifier.py`: 100% coverage. `fail_under` remains `80`, unchanged since Task 1.1. The two
-uncovered lines (`contract.py` 95, 108) predate Task 1.2 and remain deliberate accept-only paths.
+`completeness/evaluator.py`: 100% coverage. `fail_under` remains `80`, unchanged since Task 1.1. The
+two uncovered lines (`contract.py` 95, 108) predate Task 1.2 and remain deliberate accept-only
+paths.
 
 Python 3.12.13 run: identical results.
 
 Per-task problem/resolution detail lives in the task records under `docs/tasks/`, not here — see
 [TASK-1.2](tasks/TASK-1.2-release-contract-yaml-loading.md),
-[TASK-1.3](tasks/TASK-1.3-evidence-envelope-and-junit-parser.md), and
-[TASK-1.4](tasks/TASK-1.4-evidence-to-contract-binding-verification.md).
+[TASK-1.3](tasks/TASK-1.3-evidence-envelope-and-junit-parser.md),
+[TASK-1.4](tasks/TASK-1.4-evidence-to-contract-binding-verification.md), and
+[TASK-1.5](tasks/TASK-1.5-evidence-completeness-evaluation.md).
 
 ---
 
 ## Last Updated
 
-**2026-07-21** — Task 1.4, evidence-to-contract binding verification.
+**2026-07-21** — Task 1.5, evidence completeness evaluation.
