@@ -1,0 +1,14 @@
+version: qualitymesh.dev/automation/v1
+tasks:
+  - id: QM-AUTO-002
+    title: Backlog dependency resolution
+    status: ready
+    priority: 1
+    risk: low
+    objective: Resolve depends_on references across the backlog into an execution order.
+    allowed_paths:
+      - automation/
+    acceptance_criteria:
+      - Circular dependencies are rejected
+    validation_commands:
+      - uv run pytest tests/automation -q
