@@ -99,9 +99,16 @@ uv run pytest --cov=qualitymesh --cov-report=term-missing
 ```
 
 The full `pytest` command covers both the core and automation tests. Do not weaken a validation
-setting to obtain a green result. The automation harness does not run a secret scanner: a caller
-must supply a verified clean-scan attestation before it can approve a commit, and missing attestation
-blocks commit eligibility.
+setting to obtain a green result. The automation harness does not run a secret scanner: the caller
+must supply `secret_scan_clean` (default `False`) from a scan it ran itself; the harness cannot verify
+that attestation. When Git writes are requested and a commit is not safe (no attestation, no changes,
+path or size limits, or worktree changes that differ from the provider's reported files), the cycle
+ends `preconditions-failed` and the task is marked `BLOCKED`, not `COMPLETED`. With Git writes
+disabled the cycle only validates and records evidence.
+
+CI (`.github/workflows/validate.yml`, read-only `contents` permission) automatically runs the full
+test suite with coverage, Ruff lint and format checks, and Pyright on Python 3.12 and 3.14. CI does
+not run a secret scanner.
 
 ---
 

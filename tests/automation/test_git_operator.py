@@ -31,6 +31,7 @@ from automation.git_operator import (
     run_git_operations,
     stage_paths,
     staged_paths,
+    worktree_changed_paths,
 )
 from automation.schemas.git_operation import GitOperationErrorCode
 from automation.schemas.task import AutonomousTask
@@ -448,3 +449,18 @@ def test_no_input_mutation(tmp_path: Path) -> None:
     )
 
     assert task == task_before
+
+
+def test_worktree_changed_paths_reports_modified_deleted_and_untracked(tmp_path: Path) -> None:
+    repo = init_repo_with_remote(tmp_path)
+    (repo / "a.txt").write_text("a", encoding="utf-8")
+    (repo / "b.txt").write_text("b", encoding="utf-8")
+    run_git(["add", "a.txt", "b.txt"], repo)
+    run_git(["commit", "-m", "add"], repo)
+    assert worktree_changed_paths(repo) == ()
+
+    (repo / "a.txt").write_text("changed", encoding="utf-8")
+    (repo / "b.txt").unlink()
+    (repo / "new file.txt").write_text("n", encoding="utf-8")
+
+    assert worktree_changed_paths(repo) == ("a.txt", "b.txt", "new file.txt")

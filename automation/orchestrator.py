@@ -67,6 +67,7 @@ from automation.git_operator import (
     has_unresolved_merge_state,
     repository_has_changes,
     run_git_operations,
+    worktree_changed_paths,
 )
 from automation.provider import CodingProvider
 from automation.repair_loop import run_repair_loop
@@ -358,6 +359,7 @@ def run_orchestrator_cycle(
     try:
         changed_file_records = _hash_changed_files(worktree_root, changed_paths)
         has_changes = repository_has_changes(worktree_root)
+        actual_changed = worktree_changed_paths(worktree_root)
         merge_state_clean = not has_unresolved_merge_state(worktree_root)
         diff_line_count = count_diff_line_changes(worktree_root, changed_paths)
         precondition_result = verify_commit_preconditions(
@@ -406,6 +408,41 @@ def run_orchestrator_cycle(
                 performed=False, reason="caller did not allow Git writes"
             ),
         )
+    elif task.autonomy.auto_commit and set(actual_changed) != set(changed_paths):
+        # Validation ran against the whole worktree; the commit would contain
+        # only the provider-reported paths. Refuse a mismatch either way.
+        unreported = sorted(set(actual_changed) - set(changed_paths))
+        missing = sorted(set(changed_paths) - set(actual_changed))
+        apply_status_transition(backlog_path, backlog, task_id, TaskStatus.BLOCKED)
+        return finish(
+            OrchestratorOutcome.PRECONDITIONS_FAILED,
+            f"worktree changes differ from reported changed files: "
+            f"unreported={unreported}, not-changed={missing}",
+            task_id=task_id,
+            starting_status=starting_status,
+            final_status=TaskStatus.BLOCKED,
+            selection_result=selection,
+            repair_result=repair_result,
+            evidence_path=inputs.evidence_path,
+            evidence_result=evidence,
+        )
+    elif task.autonomy.auto_commit and not precondition_result.eligible:
+        # The caller asked for a commit, but the evidence says it is not safe to
+        # make one. A skipped commit is not a completed task: COMPLETED unblocks
+        # dependents (`dependency_resolver`), so fail closed here.
+        codes = ", ".join(violation.value for violation in precondition_result.violations)
+        apply_status_transition(backlog_path, backlog, task_id, TaskStatus.BLOCKED)
+        return finish(
+            OrchestratorOutcome.PRECONDITIONS_FAILED,
+            f"commit preconditions not met: {codes}",
+            task_id=task_id,
+            starting_status=starting_status,
+            final_status=TaskStatus.BLOCKED,
+            selection_result=selection,
+            repair_result=repair_result,
+            evidence_path=inputs.evidence_path,
+            evidence_result=evidence,
+        )
     else:
         try:
             git_result = run_git_operations(
@@ -431,6 +468,21 @@ def run_orchestrator_cycle(
                 evidence_path=inputs.evidence_path,
                 evidence_result=evidence,
             )
+
+    if inputs.allow_git_writes and task.autonomy.auto_commit and not git_result.commit.performed:
+        apply_status_transition(backlog_path, backlog, task_id, TaskStatus.BLOCKED)
+        return finish(
+            OrchestratorOutcome.GIT_OPERATION_FAILED,
+            f"commit was not performed: {git_result.commit.reason}",
+            task_id=task_id,
+            starting_status=starting_status,
+            final_status=TaskStatus.BLOCKED,
+            selection_result=selection,
+            repair_result=repair_result,
+            evidence_path=inputs.evidence_path,
+            evidence_result=evidence,
+            git_operation_result=git_result,
+        )
 
     apply_status_transition(backlog_path, backlog, task_id, TaskStatus.COMPLETED)
     return finish(

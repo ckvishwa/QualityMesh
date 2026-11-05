@@ -111,6 +111,17 @@ def repository_has_changes(repo_path: Path) -> bool:
     return _run_git(["status", "--porcelain"], cwd=repo_path) != ""
 
 
+def worktree_changed_paths(repo_path: Path) -> tuple[str, ...]:
+    """Every path that differs from `HEAD` (staged or unstaged, renames
+    reported as delete plus add) or is untracked and not ignored (read-only),
+    sorted."""
+    tracked = _run_git(["diff", "--name-only", "--no-renames", "-z", "HEAD"], cwd=repo_path)
+    untracked = _run_git(["ls-files", "--others", "--exclude-standard", "-z"], cwd=repo_path)
+    separator = chr(0)
+    paths = {path for path in (*tracked.split(separator), *untracked.split(separator)) if path}
+    return tuple(sorted(paths))
+
+
 def has_unresolved_merge_state(repo_path: Path) -> bool:
     """Whether `repo_path` is mid-merge with an unresolved `MERGE_HEAD`
     (read-only). Uses `git rev-parse --git-path`, not a hardcoded `.git/`

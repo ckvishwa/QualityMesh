@@ -320,6 +320,13 @@ test was added. The full `uv run pytest --cov=qualitymesh --cov-report=term-miss
 Ruff format, and Pyright strict checks also passed locally. The public validation workflow passed
 on Python 3.12 and 3.14 in [run 41962113051](https://github.com/ckvishwa/QualityMesh/actions/runs/41962113051).
 
+**Update 2026-11-05.** `run_orchestrator_cycle` previously reported `COMPLETED` (unblocking
+dependent tasks) when a requested commit was skipped for unmet preconditions or a declined Git
+operation, and committed only the provider-reported files even if the worktree held other validated
+edits. It now ends `preconditions-failed` or `git-operation-failed` and marks the task `BLOCKED` in
+those cases. Local run: 561 tests passed (167 core, 394 automation), 99.49% combined coverage; Ruff
+and Pyright clean. Hosted CI result for the fixing commit is recorded in the final report.
+
 The automation orchestrator previously passed `secret_scan_clean=True` without a scan. It now
 requires an explicit caller attestation, defaulting to `False`; this prevents an unverified scan
 from satisfying the commit precondition. The harness still does not perform its own secret scan.

@@ -62,6 +62,7 @@ class OrchestratorOutcome(StrEnum):
     POLICY_VIOLATION = "policy-violation"
     EVIDENCE_FAILED = "evidence-failed"
     GIT_OPERATION_FAILED = "git-operation-failed"
+    PRECONDITIONS_FAILED = "preconditions-failed"
     BLOCKED = "blocked"
 
 

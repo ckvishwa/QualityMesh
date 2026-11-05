@@ -193,6 +193,7 @@ def make_inputs(tmp_path: Path, **overrides: Any) -> OrchestratorInputs:
         "command_policy": CommandPolicy(worktree_root=str(tmp_path / "worktrees")),
         "execution_policy": ValidationExecutionPolicy(),
         "token_budget": 100_000,
+        "secret_scan_clean": True,
     }
     fields.update(overrides)
     return OrchestratorInputs.model_validate(fields)
@@ -204,7 +205,7 @@ def patch_common(
     worktree_metadata: WorktreeMetadata,
     repair_result: RepairLoopResult,
     *,
-    has_changes: bool = False,
+    has_changes: bool = True,
     merge_state_clean: bool = True,
     diff_line_count: int = 0,
     fail_at: str | None = None,
@@ -279,6 +280,11 @@ def patch_common(
         calls.append("repository_has_changes")
         return has_changes
 
+    def fake_worktree_changed_paths(path: Any) -> tuple[str, ...]:
+        if not repair_result.attempts:
+            return ()
+        return tuple(sorted(repair_result.attempts[-1].response.changed_files))
+
     def fake_has_unresolved_merge_state(path: Any) -> bool:
         calls.append("has_unresolved_merge_state")
         return not merge_state_clean
@@ -307,6 +313,7 @@ def patch_common(
     monkeypatch.setattr(orchestrator, "write_manifest_atomically", fake_write_manifest_atomically)
     monkeypatch.setattr(orchestrator, "run_repair_loop", fake_run_repair_loop)
     monkeypatch.setattr(orchestrator, "repository_has_changes", fake_repository_has_changes)
+    monkeypatch.setattr(orchestrator, "worktree_changed_paths", fake_worktree_changed_paths)
     monkeypatch.setattr(orchestrator, "has_unresolved_merge_state", fake_has_unresolved_merge_state)
     monkeypatch.setattr(orchestrator, "count_diff_line_changes", fake_count_diff_line_changes)
 
@@ -653,18 +660,18 @@ def test_missing_secret_scan_attestation_blocks_commit(
     )
 
     result = run_orchestrator_cycle(
-        make_inputs(tmp_path, allow_git_writes=True),
+        make_inputs(tmp_path, allow_git_writes=True, secret_scan_clean=False),
         FakeCodingProvider(),
     )
 
+    assert result.outcome is OrchestratorOutcome.PRECONDITIONS_FAILED
     assert result.evidence_result is not None
     assert result.evidence_result.precondition_result.eligible is False
     assert any(
         violation.value == "secret-scan-blocked"
         for violation in result.evidence_result.precondition_result.violations
     )
-    assert result.git_operation_result is not None
-    assert result.git_operation_result.commit.performed is False
+    assert result.git_operation_result is None
 
 
 def test_successful_permitted_commit_and_draft_pr(
@@ -852,11 +859,19 @@ def test_real_integration_end_to_end(tmp_path: Path) -> None:
         execution_policy=ValidationExecutionPolicy(),
         token_budget=100_000,
         allow_git_writes=True,
+        secret_scan_clean=True,
     )
 
-    result = run_orchestrator_cycle(inputs, FakeCodingProvider(response=make_provider_response()))
+    class EditingProvider(FakeCodingProvider):
+        def execute(self, request: Any) -> ProviderResponse:
+            target = worktree_parent / task.id / "README.md"
+            target.write_text("hello\nedited\n", encoding="utf-8")
+            return super().execute(request)
 
-    assert result.outcome is OrchestratorOutcome.COMPLETED
+    provider = EditingProvider(response=make_provider_response(("README.md",)))
+    result = run_orchestrator_cycle(inputs, provider)
+
+    assert result.outcome is OrchestratorOutcome.COMPLETED, result.reason
     assert result.task_id == "integration-task"
     assert result.final_status is TaskStatus.COMPLETED
     assert result.repair_result is not None
@@ -869,4 +884,153 @@ def test_real_integration_end_to_end(tmp_path: Path) -> None:
     assert reloaded_backlog.tasks[0].status is TaskStatus.COMPLETED
     # `auto_open_pr` was never granted, so no push/PR was attempted.
     assert result.git_operation_result is not None
+    assert result.git_operation_result.commit.performed is True
     assert result.git_operation_result.push.performed is False
+
+    # Same cycle with no real edit: nothing to commit, so it must not complete.
+    (backlog_path).write_text(
+        backlog_path.read_text(encoding="utf-8").replace("status: completed", "status: ready"),
+        encoding="utf-8",
+    )
+    shutil.rmtree(worktree_parent / task.id, ignore_errors=True)
+    run_git(["worktree", "prune"], repo_path)
+    run_git(["branch", "-D", "agent/integration-task"], repo_path)
+    no_change = run_orchestrator_cycle(
+        inputs, FakeCodingProvider(response=make_provider_response())
+    )
+    assert no_change.outcome is OrchestratorOutcome.PRECONDITIONS_FAILED
+    assert no_change.final_status is TaskStatus.BLOCKED
+
+
+# --------------------------------------------------------------------------------------
+# Regression: a skipped commit must never be reported as a completed task
+# --------------------------------------------------------------------------------------
+
+
+def test_unmet_commit_preconditions_do_not_complete_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Entry point `run_orchestrator_cycle`, git writes requested, no scan
+    attestation: the commit is skipped, so the task must end BLOCKED, never
+    COMPLETED (which unblocks dependents)."""
+    task = build_task()
+    backlog = build_backlog(task)
+    worktree_metadata = make_worktree_metadata(task.id, str(tmp_path / "worktrees" / task.id))
+    repair_result = make_repair_result(task.id)
+    calls, snapshots = patch_common(
+        monkeypatch,
+        backlog,
+        worktree_metadata,
+        repair_result,
+        has_changes=True,
+        fake_git_operations=None,
+    )
+
+    result = run_orchestrator_cycle(
+        make_inputs(tmp_path, allow_git_writes=True, secret_scan_clean=False),
+        FakeCodingProvider(),
+    )
+
+    assert result.outcome is OrchestratorOutcome.PRECONDITIONS_FAILED
+    assert result.final_status is TaskStatus.BLOCKED
+    assert "apply_status_transition:completed" not in calls
+    assert snapshots[-1].tasks[0].status is TaskStatus.BLOCKED
+    assert result.evidence_result is not None
+    assert result.evidence_result.precondition_result.eligible is False
+
+
+def test_commit_skipped_by_git_operator_does_not_complete_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preconditions pass but the git operator declines to commit (e.g. staged
+    scope mismatch): must be GIT_OPERATION_FAILED / BLOCKED, not COMPLETED."""
+    task = build_task()
+    backlog = build_backlog(task)
+    worktree_metadata = make_worktree_metadata(task.id, str(tmp_path / "worktrees" / task.id))
+    repair_result = make_repair_result(task.id)
+
+    def declining_git_operations(*args: Any, **kwargs: Any) -> GitOperationResult:
+        return GitOperationResult(
+            commit=CommitOperationResult(performed=False, reason="staged scope mismatch"),
+            push=PushOperationResult(performed=False, reason="commit was not performed"),
+            pull_request=DraftPullRequestResult(performed=False, reason="commit was not performed"),
+        )
+
+    calls, _ = patch_common(
+        monkeypatch,
+        backlog,
+        worktree_metadata,
+        repair_result,
+        has_changes=True,
+        fake_git_operations=declining_git_operations,
+    )
+
+    result = run_orchestrator_cycle(
+        make_inputs(tmp_path, allow_git_writes=True, secret_scan_clean=True),
+        FakeCodingProvider(),
+    )
+
+    assert result.outcome is OrchestratorOutcome.GIT_OPERATION_FAILED
+    assert result.final_status is TaskStatus.BLOCKED
+    assert "apply_status_transition:completed" not in calls
+
+
+def test_unreported_worktree_edit_blocks_commit(tmp_path: Path) -> None:
+    """Provider edits README.md (reported) and notes.txt (unreported). The
+    validated tree differs from what would be committed, so the cycle must not
+    complete or commit."""
+    repo_path = tmp_path / "repo"
+    commit = init_repo(repo_path)
+    worktree_parent = tmp_path / "worktrees"
+    worktree_parent.mkdir()
+    backlog_path = tmp_path / "backlog.yaml"
+    backlog_path.write_text(
+        "version: qualitymesh.dev/automation/v1\n"
+        "tasks:\n"
+        "  - id: scope-task\n"
+        "    title: Task A\n"
+        "    status: ready\n"
+        "    priority: 1\n"
+        "    risk: low\n"
+        "    objective: Do something.\n"
+        "    allowed_paths: [README.md]\n"
+        "    acceptance_criteria: [It works]\n"
+        "    validation_commands: [git status]\n"
+        "    autonomy:\n"
+        "      auto_modify: true\n"
+        "      auto_test: true\n"
+        "      auto_commit: true\n",
+        encoding="utf-8",
+    )
+    inputs = OrchestratorInputs(
+        backlog_path=str(backlog_path),
+        repository_path=str(repo_path),
+        base_commit=commit,
+        worktree_parent=str(worktree_parent),
+        cache_manifest_path=str(tmp_path / "cache.json"),
+        evidence_path=str(tmp_path / "evidence.json"),
+        allowed_risk_levels=(RiskLevel.LOW,),
+        command_policy=CommandPolicy(
+            worktree_root=str(worktree_parent / "scope-task"), allowed_executables=("git",)
+        ),
+        execution_policy=ValidationExecutionPolicy(),
+        token_budget=100_000,
+        allow_git_writes=True,
+        secret_scan_clean=True,
+    )
+
+    class SneakyProvider(FakeCodingProvider):
+        def execute(self, request: Any) -> ProviderResponse:
+            root = worktree_parent / "scope-task"
+            (root / "README.md").write_text("hello\nedited\n", encoding="utf-8")
+            (root / "notes.txt").write_text("unreported\n", encoding="utf-8")
+            return super().execute(request)
+
+    result = run_orchestrator_cycle(
+        inputs, SneakyProvider(response=make_provider_response(("README.md",)))
+    )
+
+    assert result.outcome is OrchestratorOutcome.PRECONDITIONS_FAILED
+    assert result.final_status is TaskStatus.BLOCKED
+    assert "notes.txt" in result.reason
+    assert run_git(["rev-list", "--count", "agent/scope-task"], repo_path) == "1"
