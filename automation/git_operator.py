@@ -162,17 +162,41 @@ def staged_paths(repo_path: Path) -> tuple[str, ...]:
     return tuple(line for line in output.splitlines() if line)
 
 
+def _read_blob(repo_path: Path, object_id: str) -> bytes:
+    executable = _resolve_executable("git", not_found_code=GitOperationErrorCode.GIT_COMMAND_FAILED)
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed args, resolved executable, no shell text
+            [executable, "cat-file", "blob", object_id],
+            cwd=repo_path,
+            capture_output=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+            shell=False,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GitOperationError(
+            f"git cat-file blob {object_id} failed to run: {exc}",
+            code=GitOperationErrorCode.GIT_COMMAND_FAILED,
+        ) from exc
+    if result.returncode != 0:
+        raise GitOperationError(
+            f"git cat-file blob {object_id} failed (exit {result.returncode})",
+            code=GitOperationErrorCode.GIT_COMMAND_FAILED,
+        )
+    return result.stdout
+
+
 def staged_content_mismatches(repo_path: Path, paths: Sequence[str]) -> tuple[str, ...]:
-    """Paths whose staged blob differs from the raw bytes currently in the
-    worktree (read-only). `git add` can rewrite content (clean filters,
-    `.gitattributes` conversions, line-ending normalization), so the bytes a
-    scanner approved in the worktree are not necessarily the bytes staged.
-    Compares the staged object id with `git hash-object --no-filters`, i.e. the
-    id of the exact worktree bytes. Any difference — or a path with no staged
-    entry — is reported, so conversions are rejected rather than tolerated."""
+    """Paths whose staged blob is not the worktree bytes the scanner reviewed
+    (read-only). `git add` can rewrite content (clean filters, `.gitattributes`
+    conversions), so the bytes a scanner approved are not necessarily the bytes
+    staged. A staged blob is accepted only if it equals the raw worktree bytes
+    exactly, or those bytes with CRLF line endings normalized to LF (the one
+    conversion `core.autocrlf` / `text` attributes legitimately perform, and
+    which only removes carriage returns). Anything else — including a path with
+    no staged entry — is reported."""
     if not paths:
         return ()
-    raw_ids = _run_git(["hash-object", "--no-filters", "--", *paths], cwd=repo_path).split()
     staged = _run_git(["ls-files", "-s", "-z", "--", *paths], cwd=repo_path)
     staged_ids: dict[str, str] = {}
     for entry in staged.split(chr(0)):
@@ -180,13 +204,21 @@ def staged_content_mismatches(repo_path: Path, paths: Sequence[str]) -> tuple[st
         fields = meta.split()
         if path and len(fields) == 3:
             staged_ids[path] = fields[1]
-    if len(raw_ids) != len(paths):
-        return tuple(sorted(paths))
-    return tuple(
-        sorted(
-            path for path, raw in zip(paths, raw_ids, strict=True) if staged_ids.get(path) != raw
-        )
-    )
+    mismatched: list[str] = []
+    for path in paths:
+        object_id = staged_ids.get(path)
+        try:
+            worktree_bytes = (repo_path / path).read_bytes()
+        except OSError:
+            mismatched.append(path)
+            continue
+        if object_id is None:
+            mismatched.append(path)
+            continue
+        staged_bytes = _read_blob(repo_path, object_id)
+        if staged_bytes not in (worktree_bytes, worktree_bytes.replace(b"\r\n", b"\n")):
+            mismatched.append(path)
+    return tuple(sorted(mismatched))
 
 
 def stage_paths(repo_path: Path, paths: Sequence[str]) -> None:

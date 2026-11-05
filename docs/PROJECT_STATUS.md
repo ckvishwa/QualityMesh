@@ -336,10 +336,10 @@ is requested. Regression tests: `tests/automation/test_orchestrator_completion_g
 
 **Update 2026-11-05 (staged content).** A Git clean filter could rewrite a file at `git add`, so the
 scanner approved one set of bytes and a different blob was committed (reproduced: outcome `completed`,
-marker in the committed blob). `run_git_operations` now compares each staged blob id with
-`git hash-object --no-filters` of the worktree file and refuses to commit on any difference; the cycle
-ends `git-operation-failed` / `BLOCKED`. Policy: any staging conversion, including CRLF normalization,
-is rejected. Regression tests: `tests/automation/test_orchestrator_staging.py`.
+marker in the committed blob). `run_git_operations` now compares each staged blob with the
+worktree bytes and refuses to commit unless they are identical or differ only by CRLF-to-LF
+normalization; otherwise the cycle ends `git-operation-failed` / `BLOCKED`. (A first, stricter version
+also rejected CRLF normalization and failed hosted CI on Windows, where `core.autocrlf` is on.) Regression tests: `tests/automation/test_orchestrator_staging.py`.
 
 **Update 2026-11-05 (scan evidence).** `OrchestratorInputs.secret_scan_clean=True` let a commit through
 with no scanner run (reproduced: planted marker committed, outcome `completed`). The flag is removed;

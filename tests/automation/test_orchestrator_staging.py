@@ -82,3 +82,26 @@ def _has_commit(repo: Path) -> bool:
 
 def _commit_count(repo: Path) -> str:
     return run_git(["rev-list", "--count", "agent/gate-task"], repo)
+
+
+def test_crlf_normalization_at_staging_is_accepted(tmp_path: Path) -> None:
+    """core.autocrlf (default on Windows) turns CRLF into LF at `git add`; that
+    only removes carriage returns, so it must not block a legitimate commit."""
+    command, exes = real_scanner(tmp_path)
+    inputs, backlog_path, worktree_parent = setup_cycle(
+        tmp_path, auto_commit=True, allow_git_writes=True, scan_command=command, scan_exes=exes
+    )
+    repo = Path(inputs.repository_path)
+    run_git(["config", "core.autocrlf", "true"], repo)
+    provider = EditingProvider(
+        worktree_parent / "gate-task",
+        {"README.md": "line one\r\nline two\r\n"},
+        make_provider_response(("README.md",)),
+    )
+
+    result = run_orchestrator_cycle(inputs, provider)
+
+    assert result.outcome is OrchestratorOutcome.COMPLETED, result.reason
+    assert task_status(backlog_path, "gate-task") is TaskStatus.COMPLETED
+    committed = run_git(["cat-file", "-p", "agent/gate-task:README.md"], repo)
+    assert committed == "line one\nline two"
