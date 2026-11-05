@@ -113,7 +113,8 @@ class _Editing(FakeCodingProvider):
 
     def execute(self, request: Any) -> ProviderResponse:
         for name, text in self._edits.items():
-            (self._worktree / name).write_text(text, encoding="utf-8")
+            # bytes, not text mode: Windows would translate \n to \r\n and skew hashes
+            (self._worktree / name).write_bytes(text.encode("utf-8"))
         return super().execute(request)
 
 
