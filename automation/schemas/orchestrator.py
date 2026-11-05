@@ -91,6 +91,15 @@ def _parse_allowed_risk_levels(value: object) -> tuple[RiskLevel, ...]:
     return tuple(parsed)
 
 
+def _parse_command(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("secret_scan_command must be an array")
+    items = cast("list[object] | tuple[object, ...]", value)
+    if not all(isinstance(item, str) for item in items):
+        raise ValueError("secret_scan_command entries must be strings")
+    return tuple(cast("str", item) for item in items)
+
+
 class OrchestratorInputs(StrictOrchestratorModel):
     """Everything one orchestrator cycle needs, explicit — never a hidden
     global or environment variable.
@@ -100,9 +109,12 @@ class OrchestratorInputs(StrictOrchestratorModel):
     `automation.task_selector.select_next_task`). `allow_git_writes` is the
     caller's own permission gate: when `False`, `automation.git_operator` is
     never invoked at all, regardless of what `task.autonomy` itself permits.
-    `secret_scan_clean` is a caller-supplied attestation for the prepared
-    worktree, not a scan performed by this module. It defaults to False, so
-    commit eligibility fails closed when the caller has not verified a scan.
+    `secret_scan_command` is the trusted release workflow's approved scanner
+    (executable first, then arguments; the executable must be allowlisted by
+    `command_policy`). When a commit is requested the orchestrator runs it
+    itself inside the worktree after validation: exit status 0 over an
+    unchanged tree is the only way to satisfy the secret-scan precondition.
+    There is deliberately no caller-supplied "scan was clean" flag.
     """
 
     backlog_path: NonEmptyStr
@@ -121,7 +133,10 @@ class OrchestratorInputs(StrictOrchestratorModel):
     max_output_tokens: Annotated[int, Field(strict=True, ge=1)] = 4096
     base_branch: NonEmptyStr = "main"
     allow_git_writes: bool = False
-    secret_scan_clean: bool = False
+    secret_scan_command: (
+        Annotated[tuple[NonEmptyStr, ...], BeforeValidator(_parse_command), Field(min_length=1)]
+        | None
+    ) = None
 
 
 class OrchestratorRunResult(StrictOrchestratorModel):

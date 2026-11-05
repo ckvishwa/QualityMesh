@@ -99,12 +99,22 @@ uv run pytest --cov=qualitymesh --cov-report=term-missing
 ```
 
 The full `pytest` command covers both the core and automation tests. Do not weaken a validation
-setting to obtain a green result. The automation harness does not run a secret scanner: the caller
-must supply `secret_scan_clean` (default `False`) from a scan it ran itself; the harness cannot verify
-that attestation. When Git writes are requested and a commit is not safe (no attestation, no changes,
+setting to obtain a green result. The automation harness does not ship a secret scanner: the trusted release workflow supplies
+`secret_scan_command` (executable plus arguments, allowlisted in `command_policy`), and when a commit is
+requested the orchestrator runs it itself inside the worktree. Exit status 0 over an unchanged tree is the only
+way to satisfy the secret-scan precondition; a missing command, policy rejection, launch failure, timeout,
+nonzero exit, or a change to the scanned files during the scan blocks the commit. The evidence records the
+command, exit status and a digest of the scanned (path, content-hash) set, which is re-checked immediately
+before staging; after `git add`, each staged blob must equal the raw worktree bytes the scanner
+reviewed, or those bytes with CRLF normalized to LF (`core.autocrlf`); a clean filter or any other
+staging conversion blocks the commit instead of committing unscanned bytes. This shows the configured command ran over exactly the content being committed; it does not
+show the scanner is effective. The former caller-supplied `secret_scan_clean` flag was removed (migration:
+pass `secret_scan_command` instead; passing the old field is a validation error). When Git writes are requested and a commit is not safe (no attestation, no changes,
 path or size limits, or worktree changes that differ from the provider's reported files), the cycle
 ends `preconditions-failed` and the task is marked `BLOCKED`, not `COMPLETED`. With Git writes
-disabled the cycle only validates and records evidence.
+disabled (or `auto_commit` off) the cycle only validates and records evidence, but it still ends
+`preconditions-failed` / `BLOCKED` for unreported worktree edits, limit or path violations, or (for
+`auto_modify` tasks) no changes; only the secret-scan attestation is waived, since nothing is committed.
 
 CI (`.github/workflows/validate.yml`, read-only `contents` permission) automatically runs the full
 test suite with coverage, Ruff lint and format checks, and Pyright on Python 3.12 and 3.14. CI does

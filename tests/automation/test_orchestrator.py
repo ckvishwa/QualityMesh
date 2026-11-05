@@ -36,6 +36,7 @@ from automation.providers.fake import FakeCodingProvider
 from automation.schemas.cache import CACHE_MANIFEST_VERSION, CacheManifest
 from automation.schemas.command import CommandOutcome, CommandPolicy, CommandRequest, CommandResult
 from automation.schemas.context import ContextBuildResult
+from automation.schemas.evidence_run import SecretScanRecord
 from automation.schemas.git_operation import (
     CommitOperationResult,
     DraftPullRequestResult,
@@ -193,7 +194,7 @@ def make_inputs(tmp_path: Path, **overrides: Any) -> OrchestratorInputs:
         "command_policy": CommandPolicy(worktree_root=str(tmp_path / "worktrees")),
         "execution_policy": ValidationExecutionPolicy(),
         "token_budget": 100_000,
-        "secret_scan_clean": True,
+        "secret_scan_command": ("scanner",),
     }
     fields.update(overrides)
     return OrchestratorInputs.model_validate(fields)
@@ -210,6 +211,7 @@ def patch_common(
     diff_line_count: int = 0,
     fail_at: str | None = None,
     fake_git_operations: Any = "default",
+    scan_passes: bool = True,
 ) -> tuple[list[str], list[TaskBacklog]]:
     """Patch every orchestrator dependency with a recording fake. Returns
     `(calls, backlog_snapshots)`: `calls` records phase names (and, for
@@ -224,6 +226,19 @@ def patch_common(
     """
     calls: list[str] = []
     backlog_snapshots: list[TaskBacklog] = []
+
+    def fake_run_secret_scan(
+        command: Any, policy: Any, root: Any, records: Any, paths: Any
+    ) -> SecretScanRecord:
+        calls.append("run_secret_scan")
+        return SecretScanRecord(
+            command=tuple(command),
+            exit_code=0 if scan_passes else 1,
+            tree_sha256="0" * 64,
+            passed=scan_passes,
+        )
+
+    monkeypatch.setattr(orchestrator, "_run_secret_scan", fake_run_secret_scan)
 
     def fake_load_backlog_file(path: Any) -> TaskBacklog:
         calls.append("load_backlog_file")
@@ -340,6 +355,7 @@ ALL_PHASES_COMPLETED = [
     "repository_has_changes",
     "has_unresolved_merge_state",
     "count_diff_line_changes",
+    "run_secret_scan",
     "run_git_operations",
     "apply_status_transition:completed",
 ]
@@ -660,7 +676,7 @@ def test_missing_secret_scan_attestation_blocks_commit(
     )
 
     result = run_orchestrator_cycle(
-        make_inputs(tmp_path, allow_git_writes=True, secret_scan_clean=False),
+        make_inputs(tmp_path, allow_git_writes=True, secret_scan_command=None),
         FakeCodingProvider(),
     )
 
@@ -791,6 +807,25 @@ def test_inputs_and_task_are_not_mutated(tmp_path: Path, monkeypatch: pytest.Mon
 # --------------------------------------------------------------------------------------
 
 
+SCAN_MARKER = "PLANTED-FAKE-SECRET-MARKER"
+_SCANNER_SOURCE = (
+    "import pathlib, sys\n"
+    "for f in pathlib.Path('.').rglob('*'):\n"
+    "    if '.git' in f.parts or not f.is_file():\n"
+    "        continue\n"
+    f"    if {SCAN_MARKER!r} in f.read_text(errors='ignore'):\n"
+    "        sys.exit(1)\n"
+)
+
+
+def real_scanner(tmp_path: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """A deterministic stand-in scanner (exit 1 when the marker is present)
+    kept outside any worktree. Returns `(command, extra_allowed_executables)`."""
+    script = tmp_path / "scanner.py"
+    script.write_text(_SCANNER_SOURCE, encoding="utf-8")
+    return ("python3", str(script)), ("python3",)
+
+
 def run_git(args: list[str], cwd: Path) -> str:
     git_executable = shutil.which("git")
     if git_executable is None:
@@ -817,6 +852,7 @@ def test_real_integration_end_to_end(tmp_path: Path) -> None:
     commit = init_repo(repo_path)
     worktree_parent = tmp_path / "worktrees"
     worktree_parent.mkdir()
+    scan_command, scan_exes = real_scanner(tmp_path)
 
     task = build_task(
         id="integration-task",
@@ -854,12 +890,12 @@ def test_real_integration_end_to_end(tmp_path: Path) -> None:
         evidence_path=str(tmp_path / "evidence.json"),
         allowed_risk_levels=(RiskLevel.LOW,),
         command_policy=CommandPolicy(
-            worktree_root=str(worktree_parent / task.id), allowed_executables=("git",)
+            worktree_root=str(worktree_parent / task.id), allowed_executables=("git", *scan_exes)
         ),
         execution_policy=ValidationExecutionPolicy(),
         token_budget=100_000,
         allow_git_writes=True,
-        secret_scan_clean=True,
+        secret_scan_command=scan_command,
     )
 
     class EditingProvider(FakeCodingProvider):
@@ -927,7 +963,7 @@ def test_unmet_commit_preconditions_do_not_complete_task(
     )
 
     result = run_orchestrator_cycle(
-        make_inputs(tmp_path, allow_git_writes=True, secret_scan_clean=False),
+        make_inputs(tmp_path, allow_git_writes=True, secret_scan_command=None),
         FakeCodingProvider(),
     )
 
@@ -966,7 +1002,7 @@ def test_commit_skipped_by_git_operator_does_not_complete_task(
     )
 
     result = run_orchestrator_cycle(
-        make_inputs(tmp_path, allow_git_writes=True, secret_scan_clean=True),
+        make_inputs(tmp_path, allow_git_writes=True),
         FakeCodingProvider(),
     )
 
@@ -983,6 +1019,7 @@ def test_unreported_worktree_edit_blocks_commit(tmp_path: Path) -> None:
     commit = init_repo(repo_path)
     worktree_parent = tmp_path / "worktrees"
     worktree_parent.mkdir()
+    scan_command, scan_exes = real_scanner(tmp_path)
     backlog_path = tmp_path / "backlog.yaml"
     backlog_path.write_text(
         "version: qualitymesh.dev/automation/v1\n"
@@ -1011,12 +1048,13 @@ def test_unreported_worktree_edit_blocks_commit(tmp_path: Path) -> None:
         evidence_path=str(tmp_path / "evidence.json"),
         allowed_risk_levels=(RiskLevel.LOW,),
         command_policy=CommandPolicy(
-            worktree_root=str(worktree_parent / "scope-task"), allowed_executables=("git",)
+            worktree_root=str(worktree_parent / "scope-task"),
+            allowed_executables=("git", *scan_exes),
         ),
         execution_policy=ValidationExecutionPolicy(),
         token_budget=100_000,
         allow_git_writes=True,
-        secret_scan_clean=True,
+        secret_scan_command=scan_command,
     )
 
     class SneakyProvider(FakeCodingProvider):

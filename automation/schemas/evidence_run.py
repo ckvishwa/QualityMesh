@@ -101,6 +101,20 @@ class ChangedFileRecord(StrictEvidenceRunModel):
     size_bytes: Annotated[int, Field(strict=True, ge=0)]
 
 
+class SecretScanRecord(StrictEvidenceRunModel):
+    """What the harness itself observed when it ran the configured secret
+    scanner over the worktree: the command, its exit status (`None` if it
+    never ran to completion), and the digest of the exact set of changed
+    files present when it ran. `passed` is true only for exit status 0 with
+    the worktree unchanged by the scan. It proves the configured command ran
+    over this content and succeeded, not that the scanner is any good."""
+
+    command: Annotated[tuple[NonEmptyStr, ...], BeforeValidator(_array_to_tuple)]
+    exit_code: int | None
+    tree_sha256: Sha256Hex
+    passed: bool
+
+
 class EvidencePackage(StrictEvidenceRunModel):
     """The full, verifiable record of one task's execution."""
 
@@ -118,6 +132,7 @@ class EvidencePackage(StrictEvidenceRunModel):
     provider_usage: ProviderUsage
     attempts: Annotated[tuple[RepairAttempt, ...], BeforeValidator(_array_to_tuple)]
     precondition_result: CommitPreconditionResult
+    secret_scan: SecretScanRecord | None = None
     known_risks: Annotated[tuple[str, ...], BeforeValidator(_array_to_tuple)] = ()
     final_outcome: NonEmptyStr
     created_at: Annotated[datetime, BeforeValidator(_parse_datetime)]

@@ -42,6 +42,7 @@ stuck `ACTIVE` afterward is unrecoverable corruption, not an ordinary result.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -54,6 +55,7 @@ from automation.cache_manager import (
     load_manifest,
     write_manifest_atomically,
 )
+from automation.command_runner import CommandRunnerError, run_command
 from automation.context_builder import ContextBuildError, build_context
 from automation.evidence_recorder import (
     EvidenceRecorderError,
@@ -71,9 +73,14 @@ from automation.git_operator import (
 )
 from automation.provider import CodingProvider
 from automation.repair_loop import run_repair_loop
-from automation.schemas.command import CommandPolicy
+from automation.schemas.command import CommandOutcome, CommandPolicy, CommandRequest
 from automation.schemas.context import ContextBuildResult
-from automation.schemas.evidence_run import ChangedFileRecord, EvidencePackage
+from automation.schemas.evidence_run import (
+    ChangedFileRecord,
+    CommitPreconditionCode,
+    EvidencePackage,
+    SecretScanRecord,
+)
 from automation.schemas.git_operation import (
     CommitOperationResult,
     DraftPullRequestResult,
@@ -181,6 +188,55 @@ def _hash_changed_files(
             )
         )
     return tuple(records)
+
+
+def _tree_digest(records: Sequence[ChangedFileRecord]) -> str:
+    """Digest of the exact (path, content-hash) set — the identity of what a
+    scan covered and what would be committed."""
+    lines = "".join(f"{record.path}\0{record.sha256}\n" for record in sorted(records, key=_path))
+    return hashlib.sha256(lines.encode("utf-8")).hexdigest()
+
+
+def _path(record: ChangedFileRecord) -> str:
+    return record.path
+
+
+def _run_secret_scan(
+    command: Sequence[str],
+    policy: CommandPolicy,
+    worktree_root: Path,
+    records: tuple[ChangedFileRecord, ...],
+    changed_paths: Sequence[str],
+) -> SecretScanRecord:
+    """Run the approved scanner over the worktree and report what happened.
+    Fails closed: a policy rejection, launch failure, timeout, nonzero exit,
+    or any change to the scanned files while it ran yields `passed=False`."""
+    before = _tree_digest(records)
+    exit_code: int | None = None
+    ran_clean = False
+    try:
+        result = run_command(
+            policy,
+            CommandRequest(
+                executable=command[0],
+                arguments=tuple(command[1:]),
+                working_directory=str(worktree_root),
+            ),
+        )
+        exit_code = result.exit_code
+        ran_clean = result.outcome is CommandOutcome.COMPLETED and result.exit_code == 0
+    except CommandRunnerError:
+        ran_clean = False
+    try:
+        after = _tree_digest(_hash_changed_files(worktree_root, changed_paths))
+    except EvidenceRecorderError:
+        after = ""
+    return SecretScanRecord(
+        command=tuple(command),
+        exit_code=exit_code,
+        tree_sha256=before,
+        passed=ran_clean and after == before,
+    )
 
 
 def run_orchestrator_cycle(
@@ -362,6 +418,16 @@ def run_orchestrator_cycle(
         actual_changed = worktree_changed_paths(worktree_root)
         merge_state_clean = not has_unresolved_merge_state(worktree_root)
         diff_line_count = count_diff_line_changes(worktree_root, changed_paths)
+        commit_requested = inputs.allow_git_writes and task.autonomy.auto_commit
+        secret_scan: SecretScanRecord | None = None
+        if commit_requested and inputs.secret_scan_command is not None:
+            secret_scan = _run_secret_scan(
+                inputs.secret_scan_command,
+                inputs.command_policy,
+                worktree_root,
+                changed_file_records,
+                changed_paths,
+            )
         precondition_result = verify_commit_preconditions(
             task,
             changed_file_records,
@@ -369,7 +435,7 @@ def run_orchestrator_cycle(
             validation_passed=True,
             has_changes=has_changes,
             merge_state_clean=merge_state_clean,
-            secret_scan_clean=inputs.secret_scan_clean,
+            secret_scan_clean=secret_scan is not None and secret_scan.passed,
         )
         evidence = build_evidence_package(
             task,
@@ -384,6 +450,7 @@ def run_orchestrator_cycle(
             provider_usage=repair_result.total_usage,
             attempts=repair_result.attempts,
             precondition_result=precondition_result,
+            secret_scan=secret_scan,
             final_outcome=repair_result.outcome.value,
             created_at=datetime.now(UTC),
         )
@@ -400,17 +467,14 @@ def run_orchestrator_cycle(
             repair_result=repair_result,
         )
 
-    if not inputs.allow_git_writes:
-        git_result = GitOperationResult(
-            commit=CommitOperationResult(performed=False, reason="caller did not allow Git writes"),
-            push=PushOperationResult(performed=False, reason="caller did not allow Git writes"),
-            pull_request=DraftPullRequestResult(
-                performed=False, reason="caller did not allow Git writes"
-            ),
-        )
-    elif task.autonomy.auto_commit and set(actual_changed) != set(changed_paths):
-        # Validation ran against the whole worktree; the commit would contain
-        # only the provider-reported paths. Refuse a mismatch either way.
+    # Scope and precondition gates apply to every cycle, not only to one that
+    # will commit: COMPLETED unblocks dependents (`dependency_resolver`), so a
+    # dry run (`allow_git_writes=False`) or a task without `auto_commit` must not
+    # complete with out-of-scope, unreported, or missing changes. Only the secret
+    # scan attestation is commit-specific (nothing leaves the worktree otherwise).
+    if set(actual_changed) != set(changed_paths):
+        # Validation ran against the whole worktree; the evidence (and any
+        # commit) covers only the provider-reported paths. Refuse a mismatch.
         unreported = sorted(set(actual_changed) - set(changed_paths))
         missing = sorted(set(changed_paths) - set(actual_changed))
         apply_status_transition(backlog_path, backlog, task_id, TaskStatus.BLOCKED)
@@ -426,15 +490,49 @@ def run_orchestrator_cycle(
             evidence_path=inputs.evidence_path,
             evidence_result=evidence,
         )
-    elif task.autonomy.auto_commit and not precondition_result.eligible:
-        # The caller asked for a commit, but the evidence says it is not safe to
-        # make one. A skipped commit is not a completed task: COMPLETED unblocks
-        # dependents (`dependency_resolver`), so fail closed here.
-        codes = ", ".join(violation.value for violation in precondition_result.violations)
+
+    blocking_violations = tuple(
+        violation
+        for violation in precondition_result.violations
+        if commit_requested
+        or (
+            violation is not CommitPreconditionCode.SECRET_SCAN_BLOCKED
+            and (violation is not CommitPreconditionCode.NO_CHANGES or task.autonomy.auto_modify)
+        )
+    )
+    if blocking_violations:
+        codes = ", ".join(violation.value for violation in blocking_violations)
         apply_status_transition(backlog_path, backlog, task_id, TaskStatus.BLOCKED)
         return finish(
             OrchestratorOutcome.PRECONDITIONS_FAILED,
             f"commit preconditions not met: {codes}",
+            task_id=task_id,
+            starting_status=starting_status,
+            final_status=TaskStatus.BLOCKED,
+            selection_result=selection,
+            repair_result=repair_result,
+            evidence_path=inputs.evidence_path,
+            evidence_result=evidence,
+        )
+
+    if not inputs.allow_git_writes:
+        git_result = GitOperationResult(
+            commit=CommitOperationResult(performed=False, reason="caller did not allow Git writes"),
+            push=PushOperationResult(performed=False, reason="caller did not allow Git writes"),
+            pull_request=DraftPullRequestResult(
+                performed=False, reason="caller did not allow Git writes"
+            ),
+        )
+    elif (
+        commit_requested
+        and _hash_changed_files(worktree_root, changed_paths) != evidence.changed_files
+    ):
+        # Defense in depth: the bytes about to be staged must be the bytes that
+        # were hashed, scanned and recorded.
+        apply_status_transition(backlog_path, backlog, task_id, TaskStatus.BLOCKED)
+        return finish(
+            OrchestratorOutcome.PRECONDITIONS_FAILED,
+            "changed files differ from the scanned and recorded content",
             task_id=task_id,
             starting_status=starting_status,
             final_status=TaskStatus.BLOCKED,
