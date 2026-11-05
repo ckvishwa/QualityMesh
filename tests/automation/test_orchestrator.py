@@ -600,6 +600,8 @@ def test_auto_commit_disabled_still_completes_without_committing(
     assert result.outcome is OrchestratorOutcome.COMPLETED
     assert result.git_operation_result is not None
     assert result.git_operation_result.commit.performed is False
+    assert result.git_operation_result.push.performed is False
+    assert result.git_operation_result.pull_request.performed is False
     assert "auto_commit is disabled" in (result.git_operation_result.commit.reason or "")
 
 
@@ -632,6 +634,37 @@ def test_caller_git_writes_disabled_skips_git_operator_entirely(
     assert result.git_operation_result.push.performed is False
     assert result.git_operation_result.pull_request.performed is False
     assert "did not allow" in (result.git_operation_result.commit.reason or "")
+
+
+def test_missing_secret_scan_attestation_blocks_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = build_task()
+    backlog = build_backlog(task)
+    worktree_metadata = make_worktree_metadata(task.id, str(tmp_path / "worktrees" / task.id))
+    repair_result = make_repair_result(task.id)
+    patch_common(
+        monkeypatch,
+        backlog,
+        worktree_metadata,
+        repair_result,
+        has_changes=True,
+        fake_git_operations=None,
+    )
+
+    result = run_orchestrator_cycle(
+        make_inputs(tmp_path, allow_git_writes=True),
+        FakeCodingProvider(),
+    )
+
+    assert result.evidence_result is not None
+    assert result.evidence_result.precondition_result.eligible is False
+    assert any(
+        violation.value == "secret-scan-blocked"
+        for violation in result.evidence_result.precondition_result.violations
+    )
+    assert result.git_operation_result is not None
+    assert result.git_operation_result.commit.performed is False
 
 
 def test_successful_permitted_commit_and_draft_pr(

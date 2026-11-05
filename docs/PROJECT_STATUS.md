@@ -280,9 +280,8 @@ engineering reason at the point of introduction.
 `uv` provisioned CPython 3.14.4 for the virtual environment. `requires-python = ">=3.12"` permits
 this, but `[tool.pyright].pythonVersion` is `"3.12"` and `[tool.ruff].target-version` is `"py312"`,
 so static analysis and runtime would disagree about the language level. Task 1.2 mitigated the risk
-by validating on both 3.14.4 and 3.12.13, but that is a manual step, not a guarantee. Still worth
-pinning deliberately — via `.python-version` or a narrower `requires-python` — and enforcing both
-versions in CI once CI exists, rather than leaving it to whatever uv selects.
+by validating on both 3.14.4 and 3.12.13. The new validation workflow tests both Python 3.12 and
+3.14 on Windows; local selection still depends on the installed interpreter unless explicitly pinned.
 
 ### L-6 — Product limitations
 
@@ -305,7 +304,7 @@ Deliberately not built. See `PRD.md` section 12 and `ARCHITECTURE.md` section 13
 - PostgreSQL persistence, Alembic migrations, object storage, the outbox worker.
 - FastAPI ingestion, GitHub OIDC verification, GitHub Checks publication.
 - End-to-end tests for Threats A, B and C.
-- CI pipeline.
+- Deployment and release CI beyond the repository validation workflow.
 - Message broker, caching layer, plugin system, policy DSL, user interface, multi-tenancy.
 - Any AI or model-driven component.
 
@@ -313,7 +312,19 @@ Deliberately not built. See `PRD.md` section 12 and `ARCHITECTURE.md` section 13
 
 ## Latest Validation Results
 
-**Run date: 2026-07-21. Status: all passing on CPython 3.14.4 and CPython 3.12.13.**
+**Audit update: 2026-11-04, local Windows run on CPython 3.14.4.** The full repository suite now
+includes a separate automation harness. `uv run pytest tests/unit -q` passed 167 core tests;
+`uv run pytest tests/automation -q` passed 390 automation tests after the secret-scan gate regression
+test was added. The full `uv run pytest --cov=qualitymesh --cov-report=term-missing -q` run passed
+557 tests with 99.49% combined statement-and-branch coverage of `src/qualitymesh`. Ruff lint,
+Ruff format, and Pyright strict checks also passed locally. A public validation workflow is now
+configured for Python 3.12 and 3.14; its first run is pending.
+
+The automation orchestrator previously passed `secret_scan_clean=True` without a scan. It now
+requires an explicit caller attestation, defaulting to `False`; this prevents an unverified scan
+from satisfying the commit precondition. The harness still does not perform its own secret scan.
+
+**Previous validation, 2026-07-21: all passing on CPython 3.14.4 and CPython 3.12.13.**
 
 | Command | Result |
 | --- | --- |
@@ -340,4 +351,4 @@ Per-task problem/resolution detail lives in the task records under `docs/tasks/`
 
 ## Last Updated
 
-**2026-07-21** — Task 1.5, evidence completeness evaluation.
+**2026-11-04** — Scope and security audit, secret-scan precondition corrected, public validation workflow configured.

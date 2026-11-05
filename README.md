@@ -1,20 +1,23 @@
 # QualityMesh
 
-**Current validation: 167 tests and 99.49% coverage (`pytest-cov`).** QualityMesh fails closed: missing, mismatched, or untrusted release evidence cannot produce a passing decision. These results cover the implemented Phase 1 components described below.
+**Core validation: 167 tests and 99.49% branch-aware coverage (`pytest-cov`).** The full repository suite also exercises the separate automation harness. Missing or mismatched evidence stays in an explicit non-success state; it cannot silently satisfy a requirement.
 
 Deterministic release-assurance and evidence-evaluation engine.
 
-QualityMesh verifies whether required release evidence is structurally valid, authentic, complete,
-correctly bound to its source and artifact, and compliant with a versioned release policy. It emits
-exactly one decision:
+QualityMesh is being built to check release evidence against a versioned contract. The implemented
+Phase 1 code safely loads contracts, validates evidence envelopes, parses JUnit reports, compares
+binding claims with a supplied release target, and checks completeness. It does **not** yet verify
+producer identity or cryptographic provenance, ingest submissions, or issue release decisions.
+
+The planned policy evaluator will use this precedence:
 
 ```text
 BLOCK > INSUFFICIENT_EVIDENCE > WARN > PASS
 ```
 
-QualityMesh does not run tests, builds or scanners, and does not judge whether software is correct
-or safe. It verifies that the required evidence exists, is authentic, is bound to the artifact under
-release, and satisfies a declared policy.
+QualityMesh does not run tests, builds, or scanners, and does not judge whether software is correct
+or safe. A matching workflow identifier in an evidence claim is not proof that the workflow produced
+the evidence.
 
 > Integrity proves that the approved bytes did not change. It does not prove that the approved bytes
 > were safe in the first place.
@@ -34,9 +37,10 @@ and GitHub integration — is planned and does not exist. Binding verification a
 evaluation are pure functions; nothing yet supplies them real data from an actual submission, since
 that requires ingestion (FR-3) to exist first.
 
-The validation suite passes: 167 tests, ruff clean, pyright strict clean, coverage 99.49%, on
-CPython 3.14 and 3.12. See [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) for the authoritative
-record.
+The current local run has 167 core tests and 390 automation tests passing on CPython 3.14.4, with
+99.49% combined statement-and-branch coverage of `src/qualitymesh`. The automation harness under
+`automation/` is separate from the release-evidence engine and has no live coding-provider adapter.
+See [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) for the dated validation record.
 
 ---
 
@@ -55,6 +59,8 @@ qualitymesh/
 │   ├── PROJECT_STATUS.md
 │   ├── adr/
 │   └── tasks/
+├── automation/             # separate experimental task orchestration harness
+├── tasks/backlog.yaml      # automation backlog
 ├── src/
 │   └── qualitymesh/
 │       ├── binding/          # evidence-to-contract binding verification
@@ -65,7 +71,8 @@ qualitymesh/
 └── tests/
     ├── fixtures/contracts/   # valid and malformed contract documents
     ├── fixtures/junit/       # valid and hostile JUnit XML documents
-    └── unit/
+    ├── unit/               # release-evidence engine tests
+    └── automation/         # orchestration harness tests
 ```
 
 Directories are created by the task that fills them. Empty scaffolding for planned components is
@@ -89,8 +96,10 @@ With coverage:
 uv run pytest --cov=qualitymesh --cov-report=term-missing
 ```
 
-All five commands must pass before a task is considered done. Do not weaken a validation setting to
-obtain a green result.
+The full `pytest` command covers both the core and automation tests. Do not weaken a validation
+setting to obtain a green result. The automation harness does not run a secret scanner: a caller
+must supply a verified clean-scan attestation before it can approve a commit, and missing attestation
+blocks commit eligibility.
 
 ---
 

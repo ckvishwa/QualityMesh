@@ -99,6 +99,9 @@ class OrchestratorInputs(StrictOrchestratorModel):
     `automation.task_selector.select_next_task`). `allow_git_writes` is the
     caller's own permission gate: when `False`, `automation.git_operator` is
     never invoked at all, regardless of what `task.autonomy` itself permits.
+    `secret_scan_clean` is a caller-supplied attestation for the prepared
+    worktree, not a scan performed by this module. It defaults to False, so
+    commit eligibility fails closed when the caller has not verified a scan.
     """
 
     backlog_path: NonEmptyStr
@@ -117,6 +120,7 @@ class OrchestratorInputs(StrictOrchestratorModel):
     max_output_tokens: Annotated[int, Field(strict=True, ge=1)] = 4096
     base_branch: NonEmptyStr = "main"
     allow_git_writes: bool = False
+    secret_scan_clean: bool = False
 
 
 class OrchestratorRunResult(StrictOrchestratorModel):

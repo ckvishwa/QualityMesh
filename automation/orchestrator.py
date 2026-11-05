@@ -367,7 +367,7 @@ def run_orchestrator_cycle(
             validation_passed=True,
             has_changes=has_changes,
             merge_state_clean=merge_state_clean,
-            secret_scan_clean=True,
+            secret_scan_clean=inputs.secret_scan_clean,
         )
         evidence = build_evidence_package(
             task,
