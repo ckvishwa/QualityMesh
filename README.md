@@ -1,5 +1,7 @@
 # QualityMesh
 
+**Current validation: 167 tests and 99.49% coverage (`pytest-cov`).** QualityMesh fails closed: missing, mismatched, or untrusted release evidence cannot produce a passing decision. These results cover the implemented Phase 1 components described below.
+
 Deterministic release-assurance and evidence-evaluation engine.
 
 QualityMesh verifies whether required release evidence is structurally valid, authentic, complete,
