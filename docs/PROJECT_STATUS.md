@@ -317,8 +317,8 @@ includes a separate automation harness. `uv run pytest tests/unit -q` passed 167
 `uv run pytest tests/automation -q` passed 390 automation tests after the secret-scan gate regression
 test was added. The full `uv run pytest --cov=qualitymesh --cov-report=term-missing -q` run passed
 557 tests with 99.49% combined statement-and-branch coverage of `src/qualitymesh`. Ruff lint,
-Ruff format, and Pyright strict checks also passed locally. A public validation workflow is now
-configured for Python 3.12 and 3.14; its first run is pending.
+Ruff format, and Pyright strict checks also passed locally. The public validation workflow passed
+on Python 3.12 and 3.14 in [run 41962113051](https://github.com/ckvishwa/QualityMesh/actions/runs/41962113051).
 
 The automation orchestrator previously passed `secret_scan_clean=True` without a scan. It now
 requires an explicit caller attestation, defaulting to `False`; this prevents an unverified scan

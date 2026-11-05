@@ -2,6 +2,8 @@
 
 **Core validation: 167 tests and 99.49% branch-aware coverage (`pytest-cov`).** The full repository suite also exercises the separate automation harness. Missing or mismatched evidence stays in an explicit non-success state; it cannot silently satisfy a requirement.
 
+[![Validation on Python 3.12 and 3.14](https://github.com/ckvishwa/QualityMesh/actions/workflows/validate.yml/badge.svg)](https://github.com/ckvishwa/QualityMesh/actions/workflows/validate.yml)
+
 Deterministic release-assurance and evidence-evaluation engine.
 
 QualityMesh is being built to check release evidence against a versioned contract. The implemented
