@@ -334,6 +334,12 @@ even for unreported worktree edits or an `auto_modify` task that changed nothing
 is requested. Regression tests: `tests/automation/test_orchestrator_completion_gate.py`. Local run:
 568 tests passed, 99.49% combined coverage; Ruff and Pyright clean. Hosted CI: not yet verified.
 
+**Update 2026-11-05 (scan evidence).** `OrchestratorInputs.secret_scan_clean=True` let a commit through
+with no scanner run (reproduced: planted marker committed, outcome `completed`). The flag is removed;
+`secret_scan_command` is run by the orchestrator in the worktree, its result and the scanned tree digest
+are recorded in `EvidencePackage.secret_scan`, and file content is re-verified before staging. Local run:
+577 tests passed, 99.49% combined coverage; Ruff and Pyright clean. Hosted CI: not yet verified.
+
 The automation orchestrator previously passed `secret_scan_clean=True` without a scan. It now
 requires an explicit caller attestation, defaulting to `False`; this prevents an unverified scan
 from satisfying the commit precondition. The harness still does not perform its own secret scan.

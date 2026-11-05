@@ -26,6 +26,7 @@ from automation.schemas.evidence_run import (
     CommitPreconditionCode,
     CommitPreconditionResult,
     EvidencePackage,
+    SecretScanRecord,
 )
 from automation.schemas.provider import ProviderUsage
 from automation.schemas.repair import RepairAttempt
@@ -121,6 +122,7 @@ def build_evidence_package(
     final_outcome: str,
     created_at: datetime,
     known_risks: Sequence[str] = (),
+    secret_scan: SecretScanRecord | None = None,
 ) -> EvidencePackage:
     """Assemble the full evidence package for one task's execution. Never
     mutates `task`. Hashes every path in `changed_paths` from its current
@@ -143,6 +145,7 @@ def build_evidence_package(
         provider_usage=provider_usage,
         attempts=tuple(attempts),
         precondition_result=precondition_result,
+        secret_scan=secret_scan,
         known_risks=tuple(known_risks),
         final_outcome=final_outcome,
         created_at=created_at,
