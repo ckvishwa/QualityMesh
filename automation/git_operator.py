@@ -162,6 +162,33 @@ def staged_paths(repo_path: Path) -> tuple[str, ...]:
     return tuple(line for line in output.splitlines() if line)
 
 
+def staged_content_mismatches(repo_path: Path, paths: Sequence[str]) -> tuple[str, ...]:
+    """Paths whose staged blob differs from the raw bytes currently in the
+    worktree (read-only). `git add` can rewrite content (clean filters,
+    `.gitattributes` conversions, line-ending normalization), so the bytes a
+    scanner approved in the worktree are not necessarily the bytes staged.
+    Compares the staged object id with `git hash-object --no-filters`, i.e. the
+    id of the exact worktree bytes. Any difference — or a path with no staged
+    entry — is reported, so conversions are rejected rather than tolerated."""
+    if not paths:
+        return ()
+    raw_ids = _run_git(["hash-object", "--no-filters", "--", *paths], cwd=repo_path).split()
+    staged = _run_git(["ls-files", "-s", "-z", "--", *paths], cwd=repo_path)
+    staged_ids: dict[str, str] = {}
+    for entry in staged.split(chr(0)):
+        meta, _, path = entry.partition("\t")
+        fields = meta.split()
+        if path and len(fields) == 3:
+            staged_ids[path] = fields[1]
+    if len(raw_ids) != len(paths):
+        return tuple(sorted(paths))
+    return tuple(
+        sorted(
+            path for path, raw in zip(paths, raw_ids, strict=True) if staged_ids.get(path) != raw
+        )
+    )
+
+
 def stage_paths(repo_path: Path, paths: Sequence[str]) -> None:
     """Stage exactly `paths` — never `git add -A`, never a wildcard."""
     if not paths:
@@ -282,6 +309,17 @@ def run_git_operations(
             commit=not_committed(
                 performed=False,
                 reason=f"staged scope {sorted(actual_staged)} != approved {sorted(changed_paths)}",
+            ),
+            push=not_pushed(performed=False, reason="commit was not performed"),
+            pull_request=not_opened(performed=False, reason="commit was not performed"),
+        )
+
+    transformed = staged_content_mismatches(repo_path, changed_paths)
+    if transformed:
+        return GitOperationResult(
+            commit=not_committed(
+                performed=False,
+                reason=f"staged content differs from the reviewed worktree bytes: {transformed}",
             ),
             push=not_pushed(performed=False, reason="commit was not performed"),
             pull_request=not_opened(performed=False, reason="commit was not performed"),

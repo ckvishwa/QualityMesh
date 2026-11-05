@@ -334,6 +334,13 @@ even for unreported worktree edits or an `auto_modify` task that changed nothing
 is requested. Regression tests: `tests/automation/test_orchestrator_completion_gate.py`. Local run:
 568 tests passed, 99.49% combined coverage; Ruff and Pyright clean. Hosted CI: not yet verified.
 
+**Update 2026-11-05 (staged content).** A Git clean filter could rewrite a file at `git add`, so the
+scanner approved one set of bytes and a different blob was committed (reproduced: outcome `completed`,
+marker in the committed blob). `run_git_operations` now compares each staged blob id with
+`git hash-object --no-filters` of the worktree file and refuses to commit on any difference; the cycle
+ends `git-operation-failed` / `BLOCKED`. Policy: any staging conversion, including CRLF normalization,
+is rejected. Regression tests: `tests/automation/test_orchestrator_staging.py`.
+
 **Update 2026-11-05 (scan evidence).** `OrchestratorInputs.secret_scan_clean=True` let a commit through
 with no scanner run (reproduced: planted marker committed, outcome `completed`). The flag is removed;
 `secret_scan_command` is run by the orchestrator in the worktree, its result and the scanned tree digest

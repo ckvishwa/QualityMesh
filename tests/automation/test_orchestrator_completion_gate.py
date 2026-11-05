@@ -63,7 +63,7 @@ _TASK_YAML = (
 )
 
 
-def _setup(
+def setup_cycle(
     tmp_path: Path,
     *,
     auto_commit: bool,
@@ -100,12 +100,12 @@ def _setup(
     return inputs, backlog_path, worktree_parent
 
 
-def _status(backlog_path: Path, task_id: str) -> TaskStatus:
+def task_status(backlog_path: Path, task_id: str) -> TaskStatus:
     backlog = TaskBacklog.model_validate(yaml.safe_load(backlog_path.read_text(encoding="utf-8")))
     return next(task.status for task in backlog.tasks if task.id == task_id)
 
 
-class _Editing(FakeCodingProvider):
+class EditingProvider(FakeCodingProvider):
     def __init__(self, worktree: Path, edits: dict[str, str], response: ProviderResponse) -> None:
         super().__init__(response=response)
         self._worktree = worktree
@@ -127,10 +127,10 @@ def test_out_of_scope_edit_stays_blocked_when_no_commit_is_attempted(
     """Entry point `run_orchestrator_cycle`. The provider edits `evil.py`, outside
     the task's allowed_paths. No commit is attempted (dry run / auto_commit off).
     Guard, not a defect: the repair loop's path policy already blocks this."""
-    inputs, backlog_path, worktree_parent = _setup(
+    inputs, backlog_path, worktree_parent = setup_cycle(
         tmp_path, auto_commit=auto_commit, allow_git_writes=allow_git_writes
     )
-    provider = _Editing(
+    provider = EditingProvider(
         worktree_parent / "gate-task",
         {"evil.py": "print('x')\n"},
         make_provider_response(("evil.py",)),
@@ -140,8 +140,8 @@ def test_out_of_scope_edit_stays_blocked_when_no_commit_is_attempted(
 
     assert result.outcome is OrchestratorOutcome.POLICY_VIOLATION, result.reason
     assert result.final_status is TaskStatus.BLOCKED
-    assert _status(backlog_path, "gate-task") is TaskStatus.BLOCKED
-    assert _status(backlog_path, "dependent-task") is TaskStatus.READY
+    assert task_status(backlog_path, "gate-task") is TaskStatus.BLOCKED
+    assert task_status(backlog_path, "dependent-task") is TaskStatus.READY
     assert "outside allowed_paths" in result.reason
 
 
@@ -149,19 +149,21 @@ def test_out_of_scope_edit_stays_blocked_when_no_commit_is_attempted(
 def test_no_change_cycle_does_not_complete_without_commit(
     tmp_path: Path, allow_git_writes: bool
 ) -> None:
-    inputs, backlog_path, _ = _setup(tmp_path, auto_commit=False, allow_git_writes=allow_git_writes)
+    inputs, backlog_path, _ = setup_cycle(
+        tmp_path, auto_commit=False, allow_git_writes=allow_git_writes
+    )
 
     result = run_orchestrator_cycle(inputs, FakeCodingProvider(response=make_provider_response()))
 
     assert result.outcome is OrchestratorOutcome.PRECONDITIONS_FAILED, result.reason
-    assert _status(backlog_path, "gate-task") is TaskStatus.BLOCKED
+    assert task_status(backlog_path, "gate-task") is TaskStatus.BLOCKED
 
 
 def test_unreported_edit_blocks_task_when_no_commit_is_attempted(tmp_path: Path) -> None:
-    inputs, backlog_path, worktree_parent = _setup(
+    inputs, backlog_path, worktree_parent = setup_cycle(
         tmp_path, auto_commit=True, allow_git_writes=False
     )
-    provider = _Editing(
+    provider = EditingProvider(
         worktree_parent / "gate-task",
         {"README.md": "hello\nedited\n", "notes.txt": "unreported\n"},
         make_provider_response(("README.md",)),
@@ -171,16 +173,16 @@ def test_unreported_edit_blocks_task_when_no_commit_is_attempted(tmp_path: Path)
 
     assert result.outcome is OrchestratorOutcome.PRECONDITIONS_FAILED, result.reason
     assert "notes.txt" in result.reason
-    assert _status(backlog_path, "gate-task") is TaskStatus.BLOCKED
+    assert task_status(backlog_path, "gate-task") is TaskStatus.BLOCKED
 
 
 def test_in_scope_dry_run_still_completes_without_scan_attestation(tmp_path: Path) -> None:
     """No commit is attempted, so the missing scan attestation alone must not
     block an otherwise valid, in-scope task (nothing leaves the worktree)."""
-    inputs, backlog_path, worktree_parent = _setup(
+    inputs, backlog_path, worktree_parent = setup_cycle(
         tmp_path, auto_commit=True, allow_git_writes=False
     )
-    provider = _Editing(
+    provider = EditingProvider(
         worktree_parent / "gate-task",
         {"README.md": "hello\nedited\n"},
         make_provider_response(("README.md",)),
@@ -189,7 +191,7 @@ def test_in_scope_dry_run_still_completes_without_scan_attestation(tmp_path: Pat
     result = run_orchestrator_cycle(inputs, provider)
 
     assert result.outcome is OrchestratorOutcome.COMPLETED, result.reason
-    assert _status(backlog_path, "gate-task") is TaskStatus.COMPLETED
+    assert task_status(backlog_path, "gate-task") is TaskStatus.COMPLETED
     assert run_git(["rev-list", "--count", "agent/gate-task"], Path(inputs.repository_path)) == "1"
 
 
@@ -207,10 +209,10 @@ def _commit_count(inputs: Any) -> str:
 
 
 def _run_with_content(tmp_path: Path, content: str, **setup: Any) -> tuple[Any, Any, Path]:
-    inputs, backlog_path, worktree_parent = _setup(
+    inputs, backlog_path, worktree_parent = setup_cycle(
         tmp_path, auto_commit=True, allow_git_writes=True, **setup
     )
-    provider = _Editing(
+    provider = EditingProvider(
         worktree_parent / "gate-task",
         {"README.md": content},
         make_provider_response(("README.md",)),
@@ -243,7 +245,7 @@ def test_commit_without_a_configured_scanner_is_blocked(tmp_path: Path) -> None:
 
     assert result.outcome is OrchestratorOutcome.PRECONDITIONS_FAILED, result.reason
     assert "secret-scan-blocked" in result.reason
-    assert _status(backlog_path, "gate-task") is TaskStatus.BLOCKED
+    assert task_status(backlog_path, "gate-task") is TaskStatus.BLOCKED
     assert _commit_count(inputs) == "1"
 
 
@@ -258,7 +260,7 @@ def test_scanner_finding_blocks_commit_and_completion(tmp_path: Path) -> None:
     assert result.evidence_result.secret_scan is not None
     assert result.evidence_result.secret_scan.exit_code == 1
     assert result.evidence_result.secret_scan.passed is False
-    assert _status(backlog_path, "gate-task") is TaskStatus.BLOCKED
+    assert task_status(backlog_path, "gate-task") is TaskStatus.BLOCKED
     assert _commit_count(inputs) == "1"
 
 
@@ -274,7 +276,7 @@ def test_scanner_that_cannot_run_fails_closed(tmp_path: Path) -> None:
     assert result.evidence_result is not None
     assert result.evidence_result.secret_scan is not None
     assert result.evidence_result.secret_scan.exit_code is None
-    assert _status(backlog_path, "gate-task") is TaskStatus.BLOCKED
+    assert task_status(backlog_path, "gate-task") is TaskStatus.BLOCKED
     assert _commit_count(inputs) == "1"
 
 
@@ -308,7 +310,7 @@ def test_clean_scan_binds_evidence_to_the_exact_committed_content(tmp_path: Path
     )
 
     assert result.outcome is OrchestratorOutcome.COMPLETED, result.reason
-    assert _status(backlog_path, "gate-task") is TaskStatus.COMPLETED
+    assert task_status(backlog_path, "gate-task") is TaskStatus.COMPLETED
     assert _commit_count(inputs) == "2"
     scan = result.evidence_result.secret_scan  # type: ignore[union-attr]  # asserted below
     assert scan is not None
@@ -325,10 +327,10 @@ def test_clean_scan_binds_evidence_to_the_exact_committed_content(tmp_path: Path
 
 def test_scan_is_not_run_when_no_commit_is_requested(tmp_path: Path) -> None:
     command, exes = real_scanner(tmp_path)
-    inputs, _, worktree_parent = _setup(
+    inputs, _, worktree_parent = setup_cycle(
         tmp_path, auto_commit=True, allow_git_writes=False, scan_command=command, scan_exes=exes
     )
-    provider = _Editing(
+    provider = EditingProvider(
         worktree_parent / "gate-task",
         {"README.md": "clean\n"},
         make_provider_response(("README.md",)),
@@ -347,7 +349,7 @@ def test_failed_terminal_transition_is_never_reported_as_success(
     """If persisting COMPLETED fails, the caller gets an exception, not a result,
     the dependent stays unrunnable, and a retry is refused while the task is ACTIVE."""
     command, exes = real_scanner(tmp_path)
-    inputs, backlog_path, worktree_parent = _setup(
+    inputs, backlog_path, worktree_parent = setup_cycle(
         tmp_path, auto_commit=True, allow_git_writes=True, scan_command=command, scan_exes=exes
     )
     real_apply = orchestrator_module.apply_status_transition
@@ -358,7 +360,7 @@ def test_failed_terminal_transition_is_never_reported_as_success(
         return real_apply(path, backlog, task_id, status)
 
     monkeypatch.setattr(orchestrator_module, "apply_status_transition", failing_apply)
-    provider = _Editing(
+    provider = EditingProvider(
         worktree_parent / "gate-task",
         {"README.md": "clean\n"},
         make_provider_response(("README.md",)),
@@ -367,8 +369,8 @@ def test_failed_terminal_transition_is_never_reported_as_success(
     with pytest.raises(BacklogStoreError, match="simulated persistence failure"):
         run_orchestrator_cycle(inputs, provider)
 
-    assert _status(backlog_path, "gate-task") is TaskStatus.ACTIVE
-    assert _status(backlog_path, "dependent-task") is TaskStatus.READY
+    assert task_status(backlog_path, "gate-task") is TaskStatus.ACTIVE
+    assert task_status(backlog_path, "dependent-task") is TaskStatus.READY
     monkeypatch.setattr(orchestrator_module, "apply_status_transition", real_apply)
     retry = run_orchestrator_cycle(inputs, FakeCodingProvider(response=make_provider_response()))
     assert retry.outcome is OrchestratorOutcome.ACTIVE_TASK_EXISTS

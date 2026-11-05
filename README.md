@@ -105,7 +105,9 @@ requested the orchestrator runs it itself inside the worktree. Exit status 0 ove
 way to satisfy the secret-scan precondition; a missing command, policy rejection, launch failure, timeout,
 nonzero exit, or a change to the scanned files during the scan blocks the commit. The evidence records the
 command, exit status and a digest of the scanned (path, content-hash) set, which is re-checked immediately
-before staging. This shows the configured command ran over exactly the content being committed; it does not
+before staging; after `git add`, each staged blob id must equal the id of the raw worktree bytes
+(`git hash-object --no-filters`), so a clean filter or other staging conversion (including line-ending
+normalization) blocks the commit instead of committing unscanned bytes. This shows the configured command ran over exactly the content being committed; it does not
 show the scanner is effective. The former caller-supplied `secret_scan_clean` flag was removed (migration:
 pass `secret_scan_command` instead; passing the old field is a validation error). When Git writes are requested and a commit is not safe (no attestation, no changes,
 path or size limits, or worktree changes that differ from the provider's reported files), the cycle
