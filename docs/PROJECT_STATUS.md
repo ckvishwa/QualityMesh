@@ -350,9 +350,15 @@ are recorded in `EvidencePackage.secret_scan`, and file content is re-verified b
 (a Windows-only test-fixture line-ending issue, run 41971684096) and passed on `30c8e78` (run 41971972285).
 The staged-content fix passed on `9874963` (run 41974277344, 580 tests locally).
 
-The automation orchestrator previously passed `secret_scan_clean=True` without a scan. It now
-requires an explicit caller attestation, defaulting to `False`; this prevents an unverified scan
-from satisfying the commit precondition. The harness still does not perform its own secret scan.
+The automation orchestrator previously passed `secret_scan_clean=True` without a scan. The
+caller-supplied `OrchestratorInputs.secret_scan_clean` field was then removed outright rather than
+re-defaulted — passing it is a validation error
+(`tests/automation/test_orchestrator_completion_gate.py`). When a commit is requested the
+orchestrator now executes the configured `secret_scan_command` itself inside the worktree
+(`automation/orchestrator.py`, `_run_secret_scan`) and derives the evidence verdict from that run,
+so no caller attestation can satisfy the commit precondition. QualityMesh still ships no scanner of
+its own: the trusted release workflow supplies the allowlisted command, and the recorded evidence
+shows that command ran over exactly the committed content — not that the scanner is effective.
 
 **Previous validation, 2026-07-21: all passing on CPython 3.14.4 and CPython 3.12.13.**
 
