@@ -325,14 +325,15 @@ dependent tasks) when a requested commit was skipped for unmet preconditions or 
 operation, and committed only the provider-reported files even if the worktree held other validated
 edits. It now ends `preconditions-failed` or `git-operation-failed` and marks the task `BLOCKED` in
 those cases. Local run: 561 tests passed (167 core, 394 automation), 99.49% combined coverage; Ruff
-and Pyright clean. Hosted CI result for the fixing commit is recorded in the final report.
+and Pyright clean. Hosted CI passed on `90d352c` (run 41966283288).
 
 **Update 2026-11-05 (completion gate).** With `allow_git_writes=False` (the default) or `auto_commit`
 off, `run_orchestrator_cycle` skipped every precondition and scope check and reported `COMPLETED`
 even for unreported worktree edits or an `auto_modify` task that changed nothing. Both now end
 `preconditions-failed` / `BLOCKED`; the secret-scan attestation is still required only when a commit
 is requested. Regression tests: `tests/automation/test_orchestrator_completion_gate.py`. Local run:
-568 tests passed, 99.49% combined coverage; Ruff and Pyright clean. Hosted CI: not yet verified.
+568 tests passed, 99.49% combined coverage; Ruff and Pyright clean. Hosted CI passed on `62df9b3`
+(run 41971061348, Python 3.12 and 3.14).
 
 **Update 2026-11-05 (staged content).** A Git clean filter could rewrite a file at `git add`, so the
 scanner approved one set of bytes and a different blob was committed (reproduced: outcome `completed`,
@@ -345,7 +346,9 @@ also rejected CRLF normalization and failed hosted CI on Windows, where `core.au
 with no scanner run (reproduced: planted marker committed, outcome `completed`). The flag is removed;
 `secret_scan_command` is run by the orchestrator in the worktree, its result and the scanned tree digest
 are recorded in `EvidencePackage.secret_scan`, and file content is re-verified before staging. Local run:
-577 tests passed, 99.49% combined coverage; Ruff and Pyright clean. Hosted CI: not yet verified.
+577 tests passed, 99.49% combined coverage; Ruff and Pyright clean. Hosted CI failed on `770a057`
+(a Windows-only test-fixture line-ending issue, run 41971684096) and passed on `30c8e78` (run 41971972285).
+The staged-content fix passed on `9874963` (run 41974277344, 580 tests locally).
 
 The automation orchestrator previously passed `secret_scan_clean=True` without a scan. It now
 requires an explicit caller attestation, defaulting to `False`; this prevents an unverified scan
