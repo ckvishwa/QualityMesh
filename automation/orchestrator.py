@@ -73,7 +73,11 @@ from automation.provider import CodingProvider
 from automation.repair_loop import run_repair_loop
 from automation.schemas.command import CommandPolicy
 from automation.schemas.context import ContextBuildResult
-from automation.schemas.evidence_run import ChangedFileRecord, EvidencePackage
+from automation.schemas.evidence_run import (
+    ChangedFileRecord,
+    CommitPreconditionCode,
+    EvidencePackage,
+)
 from automation.schemas.git_operation import (
     CommitOperationResult,
     DraftPullRequestResult,
@@ -400,17 +404,15 @@ def run_orchestrator_cycle(
             repair_result=repair_result,
         )
 
-    if not inputs.allow_git_writes:
-        git_result = GitOperationResult(
-            commit=CommitOperationResult(performed=False, reason="caller did not allow Git writes"),
-            push=PushOperationResult(performed=False, reason="caller did not allow Git writes"),
-            pull_request=DraftPullRequestResult(
-                performed=False, reason="caller did not allow Git writes"
-            ),
-        )
-    elif task.autonomy.auto_commit and set(actual_changed) != set(changed_paths):
-        # Validation ran against the whole worktree; the commit would contain
-        # only the provider-reported paths. Refuse a mismatch either way.
+    # Scope and precondition gates apply to every cycle, not only to one that
+    # will commit: COMPLETED unblocks dependents (`dependency_resolver`), so a
+    # dry run (`allow_git_writes=False`) or a task without `auto_commit` must not
+    # complete with out-of-scope, unreported, or missing changes. Only the secret
+    # scan attestation is commit-specific (nothing leaves the worktree otherwise).
+    commit_requested = inputs.allow_git_writes and task.autonomy.auto_commit
+    if set(actual_changed) != set(changed_paths):
+        # Validation ran against the whole worktree; the evidence (and any
+        # commit) covers only the provider-reported paths. Refuse a mismatch.
         unreported = sorted(set(actual_changed) - set(changed_paths))
         missing = sorted(set(changed_paths) - set(actual_changed))
         apply_status_transition(backlog_path, backlog, task_id, TaskStatus.BLOCKED)
@@ -426,11 +428,18 @@ def run_orchestrator_cycle(
             evidence_path=inputs.evidence_path,
             evidence_result=evidence,
         )
-    elif task.autonomy.auto_commit and not precondition_result.eligible:
-        # The caller asked for a commit, but the evidence says it is not safe to
-        # make one. A skipped commit is not a completed task: COMPLETED unblocks
-        # dependents (`dependency_resolver`), so fail closed here.
-        codes = ", ".join(violation.value for violation in precondition_result.violations)
+
+    blocking_violations = tuple(
+        violation
+        for violation in precondition_result.violations
+        if commit_requested
+        or (
+            violation is not CommitPreconditionCode.SECRET_SCAN_BLOCKED
+            and (violation is not CommitPreconditionCode.NO_CHANGES or task.autonomy.auto_modify)
+        )
+    )
+    if blocking_violations:
+        codes = ", ".join(violation.value for violation in blocking_violations)
         apply_status_transition(backlog_path, backlog, task_id, TaskStatus.BLOCKED)
         return finish(
             OrchestratorOutcome.PRECONDITIONS_FAILED,
@@ -442,6 +451,15 @@ def run_orchestrator_cycle(
             repair_result=repair_result,
             evidence_path=inputs.evidence_path,
             evidence_result=evidence,
+        )
+
+    if not inputs.allow_git_writes:
+        git_result = GitOperationResult(
+            commit=CommitOperationResult(performed=False, reason="caller did not allow Git writes"),
+            push=PushOperationResult(performed=False, reason="caller did not allow Git writes"),
+            pull_request=DraftPullRequestResult(
+                performed=False, reason="caller did not allow Git writes"
+            ),
         )
     else:
         try:

@@ -327,6 +327,13 @@ edits. It now ends `preconditions-failed` or `git-operation-failed` and marks th
 those cases. Local run: 561 tests passed (167 core, 394 automation), 99.49% combined coverage; Ruff
 and Pyright clean. Hosted CI result for the fixing commit is recorded in the final report.
 
+**Update 2026-11-05 (completion gate).** With `allow_git_writes=False` (the default) or `auto_commit`
+off, `run_orchestrator_cycle` skipped every precondition and scope check and reported `COMPLETED`
+even for unreported worktree edits or an `auto_modify` task that changed nothing. Both now end
+`preconditions-failed` / `BLOCKED`; the secret-scan attestation is still required only when a commit
+is requested. Regression tests: `tests/automation/test_orchestrator_completion_gate.py`. Local run:
+568 tests passed, 99.49% combined coverage; Ruff and Pyright clean. Hosted CI: not yet verified.
+
 The automation orchestrator previously passed `secret_scan_clean=True` without a scan. It now
 requires an explicit caller attestation, defaulting to `False`; this prevents an unverified scan
 from satisfying the commit precondition. The harness still does not perform its own secret scan.

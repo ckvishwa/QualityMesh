@@ -104,7 +104,9 @@ must supply `secret_scan_clean` (default `False`) from a scan it ran itself; the
 that attestation. When Git writes are requested and a commit is not safe (no attestation, no changes,
 path or size limits, or worktree changes that differ from the provider's reported files), the cycle
 ends `preconditions-failed` and the task is marked `BLOCKED`, not `COMPLETED`. With Git writes
-disabled the cycle only validates and records evidence.
+disabled (or `auto_commit` off) the cycle only validates and records evidence, but it still ends
+`preconditions-failed` / `BLOCKED` for unreported worktree edits, limit or path violations, or (for
+`auto_modify` tasks) no changes; only the secret-scan attestation is waived, since nothing is committed.
 
 CI (`.github/workflows/validate.yml`, read-only `contents` permission) automatically runs the full
 test suite with coverage, Ruff lint and format checks, and Pyright on Python 3.12 and 3.14. CI does
